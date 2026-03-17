@@ -6,6 +6,7 @@ export interface CaptchaConfig {
   enabled: boolean;
   language: string;
   maxAttempts: number;
+  langPath: string;
 }
 
 export interface AppConfig {

@@ -5,6 +5,16 @@ import { captchaIsVisible, refreshCaptcha, solveCaptcha } from "./captcha.js";
 import { normalizeWhitespace } from "./util.js";
 
 const loginFormSelector = "#userName1, input[name='userName1']";
+const manualVerificationWaitMs = 10 * 60 * 1000;
+const manualVerificationKeywords = [
+  "新设备",
+  "邮箱验证",
+  "验证邮箱",
+  "邮箱验证码",
+  "邮件验证码",
+  "发送验证码",
+  "安全验证"
+];
 
 export async function ensureAuthenticated(page: Page, config: AppConfig, logger: Logger): Promise<void> {
   await page.goto(config.humanityLectureUrl, { waitUntil: "domcontentloaded" });
@@ -21,6 +31,7 @@ export async function ensureAuthenticated(page: Page, config: AppConfig, logger:
       await fillLoginForm(page, config, logger, attempt);
       await submitLogin(page);
       await page.waitForTimeout(1500);
+      await handleManualVerificationIfNeeded(page, config, logger);
 
       if (await isLoginPage(page)) {
         const errorText = await collectLoginError(page);
@@ -131,9 +142,14 @@ async function establishLectureSession(page: Page, config: AppConfig, logger: Lo
   }
 
   if (await isAppStorePage(page)) {
+    await page.waitForTimeout(3000);
     const portalHref = await findHumanityPortalHref(page);
     if (!portalHref) {
-      throw new Error("SEP 门户页中未找到“人文讲座报名”入口，无法建立讲座系统会话");
+      const title = normalizeWhitespace(await page.title().catch(() => ""));
+      const bodyText = normalizeWhitespace(await page.locator("body").innerText().catch(() => ""));
+      throw new Error(
+        `SEP 门户页中未找到“人文讲座报名”入口，无法建立讲座系统会话；url=${page.url()} title=${title} body=${bodyText.slice(0, 240)}`
+      );
     }
 
     const resolved = new URL(portalHref, page.url()).toString();
@@ -147,7 +163,96 @@ async function establishLectureSession(page: Page, config: AppConfig, logger: Lo
 }
 
 async function findHumanityPortalHref(page: Page): Promise<string | null> {
-  const locator = page.locator("a").filter({ hasText: "人文讲座报名" }).first();
-  const href = await locator.getAttribute("href").catch(() => null);
+  const href = await page
+    .evaluate(() => {
+      const links = Array.from(document.querySelectorAll("a"))
+        .map((anchor) => ({
+          text: (anchor.textContent ?? "").replace(/\s+/g, " ").trim(),
+          href: anchor.getAttribute("href")?.trim() ?? ""
+        }))
+        .filter((link) => link.href);
+
+      const byText = links.find((link) => link.text.includes("人文讲座报名"));
+      if (byText?.href) {
+        return byText.href;
+      }
+
+      const byHref = links.find(
+        (link) =>
+          link.href.includes("humanityNotice") ||
+          link.href.includes("humanityLecture") ||
+          link.href.includes("xkcts.ucas.ac.cn")
+      );
+      return byHref?.href ?? null;
+    })
+    .catch(() => null);
+
   return href && href.trim() ? href.trim() : null;
+}
+
+async function handleManualVerificationIfNeeded(
+  page: Page,
+  config: AppConfig,
+  logger: Logger
+): Promise<void> {
+  const initialSurface = await findManualVerificationSurface(page);
+  if (!initialSurface) {
+    return;
+  }
+
+  logger.warn("auth.manual-verification-required", {
+    url: initialSurface.url,
+    title: initialSurface.title,
+    snippet: initialSurface.snippet
+  });
+
+  if (config.headless) {
+    throw new Error(
+      `检测到需要人工完成的新设备/邮箱验证，但当前是 headless 模式；url=${initialSurface.url} title=${initialSurface.title}`
+    );
+  }
+
+  logger.info("auth.manual-verification-wait", {
+    timeoutMs: manualVerificationWaitMs
+  });
+
+  const deadline = Date.now() + manualVerificationWaitMs;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(1000);
+
+    const activeSurface = await findManualVerificationSurface(page);
+    if (!activeSurface) {
+      logger.info("auth.manual-verification-cleared", {
+        url: page.url()
+      });
+      return;
+    }
+  }
+
+  throw new Error(`等待邮箱/新设备验证超时（${manualVerificationWaitMs}ms）`);
+}
+
+async function findManualVerificationSurface(
+  page: Page
+): Promise<{ url: string; title: string; snippet: string } | null> {
+  const pages = page
+    .context()
+    .pages()
+    .filter((candidate) => !candidate.isClosed());
+
+  for (const candidate of pages) {
+    const title = normalizeWhitespace(await candidate.title().catch(() => ""));
+    const bodyText = normalizeWhitespace(await candidate.locator("body").innerText().catch(() => ""));
+    const haystack = `${title} ${bodyText}`;
+
+    if (manualVerificationKeywords.some((keyword) => haystack.includes(keyword))) {
+      return {
+        url: candidate.url(),
+        title,
+        snippet: bodyText.slice(0, 240)
+      };
+    }
+  }
+
+  return null;
 }

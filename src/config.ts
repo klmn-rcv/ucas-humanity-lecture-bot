@@ -21,7 +21,8 @@ const schema = z.object({
   maxCycles: z.number().int().min(1),
   captchaEnabled: z.boolean(),
   captchaLanguage: z.string().min(1),
-  captchaMaxAttempts: z.number().int().min(1)
+  captchaMaxAttempts: z.number().int().min(1).max(5),
+  captchaLangPath: z.string().min(1)
 });
 
 export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
@@ -36,6 +37,7 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
       "log-level": { type: "string" },
       "captcha-language": { type: "string" },
       "captcha-max-attempts": { type: "string" },
+      "captcha-lang-path": { type: "string" },
       headful: { type: "boolean" },
       "dry-run": { type: "boolean" },
       "no-dry-run": { type: "boolean" },
@@ -75,7 +77,11 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
       args.values["captcha-language"] ?? process.env.UCAS_CAPTCHA_LANGUAGE ?? "eng",
     captchaMaxAttempts: Number(
       args.values["captcha-max-attempts"] ?? process.env.UCAS_CAPTCHA_MAX_ATTEMPTS ?? "3"
-    )
+    ),
+    captchaLangPath:
+      args.values["captcha-lang-path"] ??
+      process.env.UCAS_CAPTCHA_LANG_PATH ??
+      "https://tessdata.projectnaptha.com/4.0.0"
   });
 
   return {
@@ -92,7 +98,8 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
     captcha: {
       enabled: resolved.captchaEnabled,
       language: resolved.captchaLanguage,
-      maxAttempts: resolved.captchaMaxAttempts
+      maxAttempts: resolved.captchaMaxAttempts,
+      langPath: resolved.captchaLangPath
     }
   };
 }
