@@ -1,3 +1,4 @@
+import type { TimeWindowRule } from "./types.js";
 import { normalizeWhitespace } from "./util.js";
 
 export interface ParsedLectureTime {
@@ -36,40 +37,74 @@ export function parseLectureStart(text: string, now = new Date()): ParsedLecture
   };
 }
 
-export function isAllowedLectureTime(date: Date): boolean {
-  const weekday = date.getDay();
+export function isAllowedLectureTime(date: Date, rules: TimeWindowRule[]): boolean {
   const minutes = date.getHours() * 60 + date.getMinutes();
-
-  if (weekday === 1) {
-    return minutes >= 17 * 60;
-  }
-
-  if (weekday === 2) {
-    return minutes >= 19 * 60;
-  }
-
-  if (weekday === 3) {
-    return true;
-  }
-
-  return false;
+  return rules.some((rule) => matchesTimeWindow(date.getDay(), minutes, rule));
 }
 
-export function explainTimeRule(date: Date): string {
+export function explainTimeRule(date: Date, rules: TimeWindowRule[]): string {
   const weekday = date.getDay();
   const minutes = date.getHours() * 60 + date.getMinutes();
+  const matchingDayRules = rules.filter((rule) => rule.weekday === weekday);
 
-  if (weekday === 1) {
-    return minutes >= 17 * 60 ? "周一17:00后允许报名" : "周一17:00前不允许报名";
+  if (matchingDayRules.length === 0) {
+    return `当前仅允许 ${describeAllowedDays(rules)}`;
   }
 
-  if (weekday === 2) {
-    return minutes >= 19 * 60 ? "周二19:00后允许报名" : "周二19:00前不允许报名";
+  const allowedRule = matchingDayRules.find((rule) => matchesTimeWindow(weekday, minutes, rule));
+  if (allowedRule) {
+    return describeWindow(allowedRule, true);
   }
 
-  if (weekday === 3) {
-    return "周三全天允许报名";
+  return describeWindow(matchingDayRules[0], false);
+}
+
+function matchesTimeWindow(weekday: number, minutes: number, rule: TimeWindowRule): boolean {
+  if (rule.weekday !== weekday) {
+    return false;
   }
 
-  return "仅允许周一晚间、周二晚间和周三讲座";
+  if (rule.startMinutes !== null && minutes < rule.startMinutes) {
+    return false;
+  }
+
+  if (rule.endMinutes !== null && minutes > rule.endMinutes) {
+    return false;
+  }
+
+  return true;
+}
+
+function describeAllowedDays(rules: TimeWindowRule[]): string {
+  return rules.map((rule) => describeWindow(rule, true)).join("、");
+}
+
+function describeWindow(rule: TimeWindowRule, allowed: boolean): string {
+  const day = weekdayLabel(rule.weekday);
+
+  if (rule.startMinutes === null && rule.endMinutes === null) {
+    return `${day}全天${allowed ? "允许报名" : "不允许报名"}`;
+  }
+
+  if (rule.startMinutes !== null && rule.endMinutes === null) {
+    return `${day}${formatMinutes(rule.startMinutes)}后${allowed ? "允许报名" : "前不允许报名"}`;
+  }
+
+  if (rule.startMinutes === null && rule.endMinutes !== null) {
+    return `${day}${formatMinutes(rule.endMinutes)}前${allowed ? "允许报名" : "后不允许报名"}`;
+  }
+
+  return `${day}${formatMinutes(rule.startMinutes!)}-${formatMinutes(rule.endMinutes!)}${
+    allowed ? "允许报名" : "之外不允许报名"
+  }`;
+}
+
+function weekdayLabel(weekday: number): string {
+  return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][weekday] ?? `周${weekday}`;
+}
+
+function formatMinutes(minutes: number): string {
+  const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const minute = String(minutes % 60).padStart(2, "0");
+  return `${hours}:${minute}`;
 }

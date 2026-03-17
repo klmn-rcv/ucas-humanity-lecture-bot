@@ -1,5 +1,5 @@
-change-id: sep-captcha-live-validation
-created-at: 2026-03-17T21:03:19+08:00
-status: archived
-baseline-checkpoint: d9b4cecb2aa4986be047b94d135debb2240b54b0
-latest-success-checkpoint: 16cb1e9f96d95896d3c686f21215c6ef99088c20
+change-id: github-release-prep
+created-at: 2026-03-17T22:48:13+08:00
+status: executing
+baseline-checkpoint: e58973ecefab91faf7cf64277f3787f39d85b0eb
+latest-success-checkpoint: e58973ecefab91faf7cf64277f3787f39d85b0eb

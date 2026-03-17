@@ -7,11 +7,14 @@ async function main(): Promise<void> {
   const logger = new Logger(config.logLevel);
 
   logger.info("app.start", {
+    configPath: config.configPath,
+    configFileExists: config.configFileExists,
+    runMode: config.runMode,
     dryRun: config.dryRun,
     headless: config.headless,
     statePath: config.statePath,
-    maxCycles: config.maxCycles,
-    pollIntervalMs: config.pollIntervalMs
+    schedule: config.schedule,
+    timeWindowCount: config.timeWindows.length
   });
 
   const summary = await runAutomation(config, logger);

@@ -1,4 +1,5 @@
 export type LogLevel = "debug" | "info" | "warn" | "error";
+export type RunMode = "single" | "scheduled";
 
 export type TerminalLectureState = "booked" | "full";
 
@@ -9,7 +10,22 @@ export interface CaptchaConfig {
   langPath: string;
 }
 
+export interface ScheduledRuntimeConfig {
+  startHour: number;
+  endHour: number;
+  intervalMinutes: number;
+  runImmediatelyOnStart: boolean;
+}
+
+export interface TimeWindowRule {
+  weekday: number;
+  startMinutes: number | null;
+  endMinutes: number | null;
+}
+
 export interface AppConfig {
+  configPath: string;
+  configFileExists: boolean;
   username: string;
   password: string;
   loginUrl: string;
@@ -17,8 +33,9 @@ export interface AppConfig {
   statePath: string;
   headless: boolean;
   dryRun: boolean;
-  pollIntervalMs: number;
-  maxCycles: number;
+  runMode: RunMode;
+  schedule: ScheduledRuntimeConfig;
+  timeWindows: TimeWindowRule[];
   logLevel: LogLevel;
   captcha: CaptchaConfig;
 }

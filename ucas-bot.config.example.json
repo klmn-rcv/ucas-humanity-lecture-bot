@@ -1,0 +1,42 @@
+{
+  "logging": {
+    "level": "info"
+  },
+  "targets": {
+    "loginUrl": "https://sep.ucas.ac.cn/?loginFrom=/appStore",
+    "lectureUrl": "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture"
+  },
+  "runtime": {
+    "mode": "single",
+    "headless": true,
+    "dryRun": true,
+    "statePath": ".cache/lecture-state.json",
+    "schedule": {
+      "startHour": 8,
+      "endHour": 18,
+      "intervalMinutes": 60,
+      "runImmediatelyOnStart": true
+    }
+  },
+  "captcha": {
+    "enabled": true,
+    "language": "eng",
+    "maxAttempts": 3,
+    "langPath": "https://tessdata.projectnaptha.com/4.0.0"
+  },
+  "filter": {
+    "timeWindows": [
+      {
+        "weekday": 1,
+        "start": "17:00"
+      },
+      {
+        "weekday": 2,
+        "start": "19:00"
+      },
+      {
+        "weekday": 3
+      }
+    ]
+  }
+}

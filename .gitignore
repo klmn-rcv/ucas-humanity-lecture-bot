@@ -1,9 +1,13 @@
 node_modules/
 dist/
 .env
+.env.local
 .cache/
 .npm-cache/
 playwright-report/
 test-results/
+logs/
 *.log
 .venv-ddddocr/
+ucas-bot.config.json
+ucas-bot.config.local.json

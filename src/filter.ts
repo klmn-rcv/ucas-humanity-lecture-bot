@@ -1,4 +1,4 @@
-import type { BotState, LectureDecision, LectureRecord } from "./types.js";
+import type { BotState, LectureDecision, LectureRecord, TimeWindowRule } from "./types.js";
 import { isQuotaReached } from "./quota.js";
 import { getStoredLectureState } from "./state-store.js";
 import { explainTimeRule, isAllowedLectureTime, parseLectureStart } from "./time-window.js";
@@ -7,7 +7,8 @@ export function decideLectures(
   lectures: LectureRecord[],
   state: BotState,
   seenInRun: Set<string>,
-  quotaReached: boolean
+  quotaReached: boolean,
+  timeWindows: TimeWindowRule[]
 ): LectureDecision[] {
   if (quotaReached) {
     return lectures.map((lecture) => ({
@@ -17,13 +18,14 @@ export function decideLectures(
     }));
   }
 
-  return lectures.map((lecture) => decideLecture(lecture, state, seenInRun));
+  return lectures.map((lecture) => decideLecture(lecture, state, seenInRun, timeWindows));
 }
 
 function decideLecture(
   lecture: LectureRecord,
   state: BotState,
-  seenInRun: Set<string>
+  seenInRun: Set<string>,
+  timeWindows: TimeWindowRule[]
 ): LectureDecision {
   const storedState = getStoredLectureState(state, lecture.id);
   if (storedState) {
@@ -43,7 +45,7 @@ function decideLecture(
   }
 
   const parsed = lecture.startTimeText ? parseLectureStart(lecture.startTimeText) : null;
-  if (!parsed || !isAllowedLectureTime(parsed.date)) {
+  if (!parsed || !isAllowedLectureTime(parsed.date, timeWindows)) {
     return {
       lecture,
       action: "skip",
@@ -76,6 +78,13 @@ function decideLecture(
 }
 
 export function summarizeDecisionReason(decision: LectureDecision): string {
+  return summarizeDecisionReasonWithRules(decision, []);
+}
+
+export function summarizeDecisionReasonWithRules(
+  decision: LectureDecision,
+  timeWindows: TimeWindowRule[]
+): string {
   switch (decision.reason) {
     case "quota-reached":
       return "已达到预约次数要求，停止继续报名";
@@ -89,7 +98,9 @@ export function summarizeDecisionReason(decision: LectureDecision): string {
       }
 
       const parsed = parseLectureStart(decision.lecture.startTimeText);
-      return parsed ? explainTimeRule(parsed.date) : "开始时间格式无法解析，默认跳过";
+      return parsed
+        ? explainTimeRule(parsed.date, timeWindows)
+        : "开始时间格式无法解析，默认跳过";
     case "no-action":
       return "页面上未发现可点击的报名入口";
     case "duplicate-in-run":

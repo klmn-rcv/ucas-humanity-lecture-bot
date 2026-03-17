@@ -1,113 +1,198 @@
-import { parseArgs } from "node:util";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseArgs } from "node:util";
 import dotenv from "dotenv";
 import { z } from "zod";
-import type { AppConfig, LogLevel } from "./types.js";
+import type { AppConfig, LogLevel, RunMode, TimeWindowRule } from "./types.js";
 
 dotenv.config();
 
 const logLevels = ["debug", "info", "warn", "error"] as const;
+const runModes = ["single", "scheduled"] as const;
+const defaultConfigFilePath = "ucas-bot.config.json";
+const defaultLoginUrl = "https://sep.ucas.ac.cn/?loginFrom=/appStore";
+const defaultLectureUrl = "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture";
+const defaultStatePath = ".cache/lecture-state.json";
+const defaultTimeWindows = [
+  { weekday: 1, start: "17:00" },
+  { weekday: 2, start: "19:00" },
+  { weekday: 3 }
+];
 
-const schema = z.object({
+const envSchema = z.object({
   username: z.string().min(1, "UCAS_USERNAME is required"),
-  password: z.string().min(1, "UCAS_PASSWORD is required"),
-  loginUrl: z.string().url(),
-  humanityLectureUrl: z.string().url(),
-  statePath: z.string().min(1),
-  logLevel: z.enum(logLevels),
-  headless: z.boolean(),
-  dryRun: z.boolean(),
-  pollIntervalMs: z.number().int().min(0),
-  maxCycles: z.number().int().min(1),
-  captchaEnabled: z.boolean(),
-  captchaLanguage: z.string().min(1),
-  captchaMaxAttempts: z.number().int().min(1).max(5),
-  captchaLangPath: z.string().min(1)
+  password: z.string().min(1, "UCAS_PASSWORD is required")
+});
+
+const fileSchema = z.object({
+  logging: z
+    .object({
+      level: z.enum(logLevels).optional()
+    })
+    .optional(),
+  targets: z
+    .object({
+      loginUrl: z.string().url().optional(),
+      lectureUrl: z.string().url().optional()
+    })
+    .optional(),
+  runtime: z
+    .object({
+      mode: z.enum(runModes).optional(),
+      headless: z.boolean().optional(),
+      dryRun: z.boolean().optional(),
+      statePath: z.string().min(1).optional(),
+      schedule: z
+        .object({
+          startHour: z.number().int().min(0).max(23).optional(),
+          endHour: z.number().int().min(0).max(23).optional(),
+          intervalMinutes: z.number().int().min(1).optional(),
+          runImmediatelyOnStart: z.boolean().optional()
+        })
+        .optional()
+    })
+    .optional(),
+  captcha: z
+    .object({
+      enabled: z.boolean().optional(),
+      language: z.string().min(1).optional(),
+      maxAttempts: z.number().int().min(1).max(5).optional(),
+      langPath: z.string().min(1).optional()
+    })
+    .optional(),
+  filter: z
+    .object({
+      timeWindows: z
+        .array(
+          z.object({
+            weekday: z.number().int().min(0).max(6),
+            start: z.string().optional(),
+            end: z.string().optional()
+          })
+        )
+        .min(1)
+        .optional()
+    })
+    .optional()
 });
 
 export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
   const args = parseArgs({
     args: argv,
     options: {
-      "state-path": { type: "string" },
-      "login-url": { type: "string" },
-      "lecture-url": { type: "string" },
-      "poll-interval-ms": { type: "string" },
-      "max-cycles": { type: "string" },
-      "log-level": { type: "string" },
-      "captcha-language": { type: "string" },
-      "captcha-max-attempts": { type: "string" },
-      "captcha-lang-path": { type: "string" },
+      config: { type: "string" },
       headful: { type: "boolean" },
       "dry-run": { type: "boolean" },
       "no-dry-run": { type: "boolean" },
-      "captcha-disabled": { type: "boolean" }
+      "log-level": { type: "string" }
     },
     allowPositionals: false
   });
 
-  const resolved = schema.parse({
+  const env = envSchema.parse({
     username: process.env.UCAS_USERNAME ?? "",
-    password: process.env.UCAS_PASSWORD ?? "",
-    loginUrl:
-      args.values["login-url"] ??
-      process.env.UCAS_LOGIN_URL ??
-      "https://sep.ucas.ac.cn/?loginFrom=/appStore",
-    humanityLectureUrl:
-      args.values["lecture-url"] ??
-      process.env.UCAS_HUMANITY_LECTURE_URL ??
-      "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture",
-    statePath:
-      args.values["state-path"] ?? process.env.UCAS_STATE_PATH ?? ".cache/lecture-state.json",
-    logLevel:
-      (args.values["log-level"] as LogLevel | undefined) ??
-      (process.env.UCAS_LOG_LEVEL as LogLevel | undefined) ??
-      "info",
-    headless: !args.values.headful && parseBoolean(process.env.UCAS_HEADLESS, true),
-    dryRun: args.values["no-dry-run"]
-      ? false
-      : args.values["dry-run"] || parseBoolean(process.env.UCAS_DRY_RUN, false),
-    pollIntervalMs: Number(
-      args.values["poll-interval-ms"] ?? process.env.UCAS_POLL_INTERVAL_MS ?? "0"
-    ),
-    maxCycles: Number(args.values["max-cycles"] ?? process.env.UCAS_MAX_CYCLES ?? "1"),
-    captchaEnabled:
-      !args.values["captcha-disabled"] && parseBoolean(process.env.UCAS_CAPTCHA_ENABLED, true),
-    captchaLanguage:
-      args.values["captcha-language"] ?? process.env.UCAS_CAPTCHA_LANGUAGE ?? "eng",
-    captchaMaxAttempts: Number(
-      args.values["captcha-max-attempts"] ?? process.env.UCAS_CAPTCHA_MAX_ATTEMPTS ?? "3"
-    ),
-    captchaLangPath:
-      args.values["captcha-lang-path"] ??
-      process.env.UCAS_CAPTCHA_LANG_PATH ??
-      "https://tessdata.projectnaptha.com/4.0.0"
+    password: process.env.UCAS_PASSWORD ?? ""
   });
 
+  const configPath = resolve(
+    args.values.config ?? process.env.UCAS_CONFIG_PATH ?? defaultConfigFilePath
+  );
+  const configFileExists = existsSync(configPath);
+  const rawConfig = loadConfigFile(configPath, Boolean(args.values.config) || Boolean(process.env.UCAS_CONFIG_PATH));
+  const parsedFile = fileSchema.parse(rawConfig ?? {});
+  const runMode = (parsedFile.runtime?.mode ?? "single") as RunMode;
+  const schedule = {
+    startHour: parsedFile.runtime?.schedule?.startHour ?? 8,
+    endHour: parsedFile.runtime?.schedule?.endHour ?? 18,
+    intervalMinutes: parsedFile.runtime?.schedule?.intervalMinutes ?? 60,
+    runImmediatelyOnStart: parsedFile.runtime?.schedule?.runImmediatelyOnStart ?? true
+  };
+
+  if (schedule.endHour < schedule.startHour) {
+    throw new Error("runtime.schedule.endHour must be greater than or equal to startHour");
+  }
+
+  const resolvedTimeWindows = (parsedFile.filter?.timeWindows ?? defaultTimeWindows).map(
+    normalizeTimeWindowRule
+  );
+
   return {
-    username: resolved.username,
-    password: resolved.password,
-    loginUrl: resolved.loginUrl,
-    humanityLectureUrl: resolved.humanityLectureUrl,
-    statePath: resolve(resolved.statePath),
-    headless: resolved.headless,
-    dryRun: resolved.dryRun,
-    pollIntervalMs: resolved.pollIntervalMs,
-    maxCycles: resolved.maxCycles,
-    logLevel: resolved.logLevel,
+    configPath,
+    configFileExists,
+    username: env.username,
+    password: env.password,
+    loginUrl: parsedFile.targets?.loginUrl ?? defaultLoginUrl,
+    humanityLectureUrl: parsedFile.targets?.lectureUrl ?? defaultLectureUrl,
+    statePath: resolve(parsedFile.runtime?.statePath ?? defaultStatePath),
+    headless: args.values.headful ? false : parsedFile.runtime?.headless ?? true,
+    dryRun: args.values["no-dry-run"]
+      ? false
+      : args.values["dry-run"]
+        ? true
+        : parsedFile.runtime?.dryRun ?? false,
+    runMode,
+    schedule,
+    timeWindows: resolvedTimeWindows,
+    logLevel:
+      (args.values["log-level"] as LogLevel | undefined) ??
+      parsedFile.logging?.level ??
+      "info",
     captcha: {
-      enabled: resolved.captchaEnabled,
-      language: resolved.captchaLanguage,
-      maxAttempts: resolved.captchaMaxAttempts,
-      langPath: resolved.captchaLangPath
+      enabled: parsedFile.captcha?.enabled ?? true,
+      language: parsedFile.captcha?.language ?? "eng",
+      maxAttempts: parsedFile.captcha?.maxAttempts ?? 3,
+      langPath: parsedFile.captcha?.langPath ?? "https://tessdata.projectnaptha.com/4.0.0"
     }
   };
 }
 
-function parseBoolean(input: string | undefined, defaultValue: boolean): boolean {
-  if (input === undefined) {
-    return defaultValue;
+function loadConfigFile(path: string, required: boolean): unknown {
+  if (!existsSync(path)) {
+    if (required) {
+      throw new Error(`config file not found: ${path}`);
+    }
+
+    return {};
   }
 
-  return ["1", "true", "yes", "on"].includes(input.toLowerCase());
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to parse config file ${path}: ${message}`);
+  }
+}
+
+function normalizeTimeWindowRule(rule: {
+  weekday: number;
+  start?: string;
+  end?: string;
+}): TimeWindowRule {
+  const startMinutes = rule.start ? parseClockTime(rule.start) : null;
+  const endMinutes = rule.end ? parseClockTime(rule.end) : null;
+
+  if (endMinutes !== null && startMinutes !== null && endMinutes < startMinutes) {
+    throw new Error(`invalid time window for weekday ${rule.weekday}: end is earlier than start`);
+  }
+
+  return {
+    weekday: rule.weekday,
+    startMinutes,
+    endMinutes
+  };
+}
+
+function parseClockTime(value: string): number {
+  const matched = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!matched) {
+    throw new Error(`invalid clock time: ${value}`);
+  }
+
+  const hours = Number(matched[1]);
+  const minutes = Number(matched[2]);
+  if (hours > 23 || minutes > 59) {
+    throw new Error(`invalid clock time: ${value}`);
+  }
+
+  return hours * 60 + minutes;
 }
