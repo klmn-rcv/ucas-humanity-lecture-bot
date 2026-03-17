@@ -13,7 +13,7 @@ import { ensureAuthenticated } from "./login.js";
 import { isWithinScheduledWindow, getNextScheduledRun } from "./schedule.js";
 import { registerLecture } from "./register.js";
 import { loadState, markLectureTerminalState, saveState } from "./state-store.js";
-import { sleep } from "./util.js";
+import { formatLocalTimestamp, sleep } from "./util.js";
 
 export async function runAutomation(config: AppConfig, logger: Logger): Promise<RunSummary> {
   if (config.runMode === "single") {
@@ -35,7 +35,7 @@ export async function runAutomation(config: AppConfig, logger: Logger): Promise<
       const nextRunAt = getNextScheduledRun(now, config.schedule);
       const sleepMs = Math.max(0, nextRunAt.getTime() - now.getTime());
       logger.info("run.schedule.sleep", {
-        nextRunAt: nextRunAt.toISOString(),
+        nextRunAt: formatLocalTimestamp(nextRunAt),
         sleepMs
       });
       await sleep(sleepMs);

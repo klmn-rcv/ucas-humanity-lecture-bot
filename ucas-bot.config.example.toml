@@ -4,8 +4,8 @@ lectureUrl = "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture"
 
 [runtime]
 mode = "single"  # single: 执行一轮后退出；scheduled: 在设定时段内循环巡检。
-headless = true  # 可留默认；临时调试更适合用 --headful 覆盖。
-dryRun = true  # 可留默认；临时调试更适合用 --dry-run 或 --no-dry-run 覆盖。
+headless = true  # true 表示无界面运行；false 表示显示浏览器窗口。临时调试更适合用 --headful 覆盖。
+dryRun = true  # true 表示只检查候选讲座、不执行报名；false 表示执行真实报名。临时调试更适合用 --dry-run 或 --no-dry-run 覆盖。
 statePath = ".cache/lecture-state.json"  # 本地状态文件路径。
 
 [runtime.schedule]

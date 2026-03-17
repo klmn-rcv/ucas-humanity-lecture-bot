@@ -1,5 +1,6 @@
 import { loadConfig } from "./config.js";
 import { Logger } from "./log.js";
+import { formatLocalTimestamp } from "./util.js";
 import { runAutomation } from "./workflow.js";
 
 async function main(): Promise<void> {
@@ -36,7 +37,7 @@ main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(
     JSON.stringify({
-      ts: new Date().toISOString(),
+      ts: formatLocalTimestamp(),
       level: "error",
       event: "app.crash",
       message

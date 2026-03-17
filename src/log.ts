@@ -1,4 +1,5 @@
 import type { LogLevel } from "./types.js";
+import { formatLocalTimestamp } from "./util.js";
 
 const levelRank: Record<LogLevel, number> = {
   debug: 10,
@@ -33,7 +34,7 @@ export class Logger {
 
     console.log(
       JSON.stringify({
-        ts: new Date().toISOString(),
+        ts: formatLocalTimestamp(),
         level,
         event,
         ...data
