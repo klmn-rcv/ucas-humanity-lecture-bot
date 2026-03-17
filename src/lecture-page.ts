@@ -1,5 +1,10 @@
 import type { Page } from "playwright";
-import type { LecturePageSnapshot, LectureRecord, TerminalLectureState } from "./types.js";
+import type {
+  LecturePageSnapshot,
+  LectureRecord,
+  ReservationQuota,
+  TerminalLectureState
+} from "./types.js";
 import { extractQuota } from "./quota.js";
 import { hashText, normalizeWhitespace } from "./util.js";
 import { parseLectureStart } from "./time-window.js";
@@ -49,6 +54,36 @@ export async function extractLectureSnapshot(page: Page): Promise<LecturePageSna
     quota: extractQuota(pageText),
     pageText
   };
+}
+
+export async function extractQuotaFromRecordPage(
+  page: Page,
+  returnUrl: string
+): Promise<ReservationQuota | null> {
+  const href = await page
+    .evaluate(() => {
+      const links = Array.from(document.querySelectorAll("a")).map((anchor) => ({
+        text: (anchor.textContent ?? "").replace(/\s+/g, " ").trim(),
+        href: anchor.getAttribute("href") ?? ""
+      }));
+      const byHref = links.find((link) => link.href.includes("humanityStudent"));
+      if (byHref?.href) {
+        return byHref.href;
+      }
+
+      const byText = links.find((link) => link.text.includes("报名及听课记录") && link.href);
+      return byText?.href ?? null;
+    })
+    .catch(() => null);
+
+  const target = new URL(href ?? "/subject/humanityStudent", page.url()).toString();
+  await page.goto(target, { waitUntil: "networkidle" });
+  await page.waitForTimeout(3000);
+  const bodyText = normalizeWhitespace(await page.locator("body").innerText().catch(() => ""));
+  const quota = extractQuota(bodyText);
+  await page.goto(returnUrl, { waitUntil: "networkidle" });
+  await page.waitForTimeout(1500);
+  return quota;
 }
 
 function normalizeLectureRow(rawRow: RawLectureRow): LectureRecord | null {
@@ -108,12 +143,16 @@ function inferLocation(cells: string[]): string | null {
 }
 
 function inferStatusText(text: string): string {
-  if (/已预约|已报名/.test(text)) {
+  if (/已预约|已报名|已经预约过/.test(text)) {
     return "已预约";
   }
 
   if (/人数已满|预约已满|名额已满|满额/.test(text)) {
     return "人数已满";
+  }
+
+  if (/预约已结束/.test(text)) {
+    return "预约已结束";
   }
 
   if (/预约|报名|选课/.test(text)) {
@@ -124,7 +163,7 @@ function inferStatusText(text: string): string {
 }
 
 function inferTerminalState(text: string): TerminalLectureState | null {
-  if (/已预约|已报名/.test(text)) {
+  if (/已预约|已报名|已经预约过/.test(text)) {
     return "booked";
   }
 

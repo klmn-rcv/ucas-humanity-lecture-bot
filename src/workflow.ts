@@ -9,7 +9,7 @@ import type {
 import { Logger } from "./log.js";
 import { loadState, markLectureTerminalState, saveState } from "./state-store.js";
 import { ensureAuthenticated } from "./login.js";
-import { extractLectureSnapshot } from "./lecture-page.js";
+import { extractLectureSnapshot, extractQuotaFromRecordPage } from "./lecture-page.js";
 import { decideLectures, isQuotaReached, summarizeDecisionReason } from "./filter.js";
 import { registerLecture } from "./register.js";
 import { sleep } from "./util.js";
@@ -39,7 +39,11 @@ export async function runAutomation(config: AppConfig, logger: Logger): Promise<
       logger.info("run.cycle.start", { cycle, dryRun: config.dryRun });
       await ensureAuthenticated(page, config, logger);
       const snapshot = await extractLectureSnapshot(page);
-      quota = snapshot.quota;
+      const recordQuota =
+        snapshot.quota.bookedCount === null || snapshot.quota.requiredCount === null
+          ? await extractQuotaFromRecordPage(page, config.humanityLectureUrl)
+          : null;
+      quota = recordQuota ?? snapshot.quota;
       state.lastQuota = quota;
 
       if (isQuotaReached(quota)) {

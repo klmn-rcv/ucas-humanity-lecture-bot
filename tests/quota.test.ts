@@ -15,4 +15,11 @@ describe("reservation quota parser", () => {
     expect(quota.requiredCount).toBe(5);
     expect(isQuotaReached(quota)).toBe(true);
   });
+
+  it("parses record-page effective counts", () => {
+    const quota = extractQuota("统计信息：累计听讲座 8 次，其中有效 6 次 说明：听讲有效记录15次及以上，即满足听讲要求。");
+    expect(quota.bookedCount).toBe(6);
+    expect(quota.requiredCount).toBe(15);
+    expect(isQuotaReached(quota)).toBe(false);
+  });
 });

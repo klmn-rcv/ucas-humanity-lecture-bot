@@ -17,24 +17,26 @@ export async function ensureAuthenticated(page: Page, config: AppConfig, logger:
 
   for (let attempt = 1; attempt <= config.captcha.maxAttempts; attempt += 1) {
     await openLoginPageIfNeeded(page, config);
-    await fillLoginForm(page, config, logger, attempt);
-    await submitLogin(page);
-
-    await page.waitForTimeout(1500);
-
     if (await isLoginPage(page)) {
-      const errorText = await collectLoginError(page);
-      logger.warn("auth.login-still-open", { attempt, errorText });
+      await fillLoginForm(page, config, logger, attempt);
+      await submitLogin(page);
+      await page.waitForTimeout(1500);
 
-      if (await captchaIsVisible(page)) {
-        await refreshCaptcha(page, logger);
+      if (await isLoginPage(page)) {
+        const errorText = await collectLoginError(page);
+        logger.warn("auth.login-still-open", { attempt, errorText });
+
+        if (await captchaIsVisible(page)) {
+          await refreshCaptcha(page, logger);
+        }
+
+        continue;
       }
-
-      continue;
+    } else {
+      logger.info("auth.sep-session-reused", { attempt, url: page.url() });
     }
 
-    await page.goto(config.humanityLectureUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(1000);
+    await establishLectureSession(page, config, logger);
 
     if (await isLecturePage(page)) {
       logger.info("auth.success", { attempt });
@@ -48,7 +50,7 @@ export async function ensureAuthenticated(page: Page, config: AppConfig, logger:
 }
 
 async function openLoginPageIfNeeded(page: Page, config: AppConfig): Promise<void> {
-  if (await isLoginPage(page)) {
+  if ((await isLoginPage(page)) || (await isAppStorePage(page))) {
     return;
   }
 
@@ -115,4 +117,37 @@ async function isLecturePage(page: Page): Promise<boolean> {
 async function isSessionExpiredPage(page: Page): Promise<boolean> {
   const bodyText = normalizeWhitespace(await page.locator("body").innerText().catch(() => ""));
   return bodyText.includes("你的会话已失效") || bodyText.includes("请重新登录");
+}
+
+async function isAppStorePage(page: Page): Promise<boolean> {
+  const url = page.url();
+  return url.includes("/appStore") || url.includes("/appStoreStudent");
+}
+
+async function establishLectureSession(page: Page, config: AppConfig, logger: Logger): Promise<void> {
+  if (!(await isAppStorePage(page))) {
+    await page.goto(config.loginUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(1000);
+  }
+
+  if (await isAppStorePage(page)) {
+    const portalHref = await findHumanityPortalHref(page);
+    if (!portalHref) {
+      throw new Error("SEP 门户页中未找到“人文讲座报名”入口，无法建立讲座系统会话");
+    }
+
+    const resolved = new URL(portalHref, page.url()).toString();
+    logger.info("auth.portal-entry", { portalHref: resolved });
+    await page.goto(resolved, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(2000);
+  }
+
+  await page.goto(config.humanityLectureUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1000);
+}
+
+async function findHumanityPortalHref(page: Page): Promise<string | null> {
+  const locator = page.locator("a").filter({ hasText: "人文讲座报名" }).first();
+  const href = await locator.getAttribute("href").catch(() => null);
+  return href && href.trim() ? href.trim() : null;
 }
