@@ -10,5 +10,6 @@ logs/
 *.log
 *.pid
 .venv-ddddocr/
+ucas-bot.config.toml
 ucas-bot.config.json
 ucas-bot.config.local.json

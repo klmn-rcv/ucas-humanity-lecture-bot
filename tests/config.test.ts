@@ -10,51 +10,36 @@ describe("config loader", () => {
     vi.stubEnv("UCAS_PASSWORD", "pass");
 
     const tempDir = mkdtempSync(join(tmpdir(), "ucas-config-"));
-    const configPath = join(tempDir, "ucas-bot.config.json");
+    const configPath = join(tempDir, "ucas-bot.config.toml");
     writeFileSync(
       configPath,
-      JSON.stringify(
-        {
-          runtime: {
-            mode: "scheduled",
-            headless: true,
-            dryRun: false,
-            statePath: "tmp/state.json",
-            schedule: {
-              periods: [
-                ["08:00", "12:00"],
-                ["14:00", "18:00"]
-              ],
-              intervalMinutes: 60,
-              runImmediatelyOnStart: false
-            }
-          },
-          logging: {
-            level: "debug"
-          },
-          captcha: {
-            pythonExecutable: "./custom-python",
-            maxAttempts: 5
-          },
-          filter: {
-            timeWindows: [
-              {
-                weekday: 1,
-                periods: [
-                  ["17:00", "18:00"],
-                  ["20:00", "21:00"]
-                ]
-              },
-              {
-                weekday: 3,
-                periods: [["00:00", "23:59"]]
-              }
-            ]
-          }
-        },
-        null,
-        2
-      )
+      `
+[runtime]
+mode = "scheduled"
+headless = true
+dryRun = false
+statePath = "tmp/state.json"
+
+[runtime.schedule]
+periods = [["08:00", "12:00"], ["14:00", "18:00"]]
+intervalMinutes = 60
+runImmediatelyOnStart = false
+
+[logging]
+level = "debug"
+
+[captcha]
+pythonExecutable = "./custom-python"
+maxAttempts = 5
+
+[[filter.timeWindows]]
+weekday = 1
+periods = [["17:00", "18:00"], ["20:00", "21:00"]]
+
+[[filter.timeWindows]]
+weekday = 3
+periods = [["00:00", "23:59"]]
+`
     );
 
     const config = loadConfig(["--config", configPath]);
@@ -82,24 +67,43 @@ describe("config loader", () => {
     ]);
   });
 
+  it("parses TOML config files with comments", () => {
+    vi.stubEnv("UCAS_USERNAME", "user");
+    vi.stubEnv("UCAS_PASSWORD", "pass");
+
+    const tempDir = mkdtempSync(join(tmpdir(), "ucas-config-"));
+    const configPath = join(tempDir, "ucas-bot.config.toml");
+    writeFileSync(
+      configPath,
+      `
+# comments should be ignored
+[runtime]
+mode = "scheduled"
+
+[runtime.schedule]
+periods = [["08:00", "18:00"]]
+intervalMinutes = 60
+`
+    );
+
+    const config = loadConfig(["--config", configPath]);
+    expect(config.runMode).toBe("scheduled");
+    expect(config.schedule.periods).toEqual([{ startMinutes: 8 * 60, endMinutes: 18 * 60 }]);
+  });
+
   it("allows temporary cli overrides on top of config files", () => {
     vi.stubEnv("UCAS_USERNAME", "user");
     vi.stubEnv("UCAS_PASSWORD", "pass");
 
     const tempDir = mkdtempSync(join(tmpdir(), "ucas-config-"));
-    const configPath = join(tempDir, "ucas-bot.config.json");
+    const configPath = join(tempDir, "ucas-bot.config.toml");
     writeFileSync(
       configPath,
-      JSON.stringify(
-        {
-          runtime: {
-            dryRun: false,
-            headless: true
-          }
-        },
-        null,
-        2
-      )
+      `
+[runtime]
+dryRun = false
+headless = true
+`
     );
 
     const config = loadConfig(["--config", configPath, "--dry-run", "--headful"]);
@@ -112,18 +116,13 @@ describe("config loader", () => {
     vi.stubEnv("UCAS_PASSWORD", "pass");
 
     const tempDir = mkdtempSync(join(tmpdir(), "ucas-config-"));
-    const configPath = join(tempDir, "ucas-bot.config.json");
+    const configPath = join(tempDir, "ucas-bot.config.toml");
     writeFileSync(
       configPath,
-      JSON.stringify(
-        {
-          captcha: {
-            maxAttempts: 6
-          }
-        },
-        null,
-        2
-      )
+      `
+[captcha]
+maxAttempts = 6
+`
     );
 
     expect(() => loadConfig(["--config", configPath])).toThrow();
@@ -134,23 +133,13 @@ describe("config loader", () => {
     vi.stubEnv("UCAS_PASSWORD", "pass");
 
     const tempDir = mkdtempSync(join(tmpdir(), "ucas-config-"));
-    const configPath = join(tempDir, "ucas-bot.config.json");
+    const configPath = join(tempDir, "ucas-bot.config.toml");
     writeFileSync(
       configPath,
-      JSON.stringify(
-        {
-          runtime: {
-            schedule: {
-              periods: [
-                ["08:00", "12:00"],
-                ["11:00", "18:00"]
-              ]
-            }
-          }
-        },
-        null,
-        2
-      )
+      `
+[runtime.schedule]
+periods = [["08:00", "12:00"], ["11:00", "18:00"]]
+`
     );
 
     expect(() => loadConfig(["--config", configPath])).toThrow(/overlapping/);

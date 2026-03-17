@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { platform } from "node:os";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import dotenv from "dotenv";
 import { z } from "zod";
@@ -16,7 +16,8 @@ dotenv.config();
 
 const logLevels = ["debug", "info", "warn", "error"] as const;
 const runModes = ["single", "scheduled"] as const;
-const defaultConfigFilePath = "ucas-bot.config.json";
+const defaultConfigFilePath = "ucas-bot.config.toml";
+const legacyConfigFilePath = "ucas-bot.config.json";
 const defaultLoginUrl = "https://sep.ucas.ac.cn/?loginFrom=/appStore";
 const defaultLectureUrl = "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture";
 const defaultStatePath = ".cache/lecture-state.json";
@@ -101,7 +102,7 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
     password: process.env.UCAS_PASSWORD ?? ""
   });
 
-  const configPath = resolve(args.values.config ?? defaultConfigFilePath);
+  const configPath = resolve(resolveConfigPath(args.values.config));
   const configFileExists = existsSync(configPath);
   const rawConfig = loadConfigFile(configPath, Boolean(args.values.config));
   const parsedFile = fileSchema.parse(rawConfig ?? {});
@@ -159,11 +160,28 @@ function loadConfigFile(path: string, required: boolean): unknown {
   }
 
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const raw = readFileSync(path, "utf8");
+    return extname(path).toLowerCase() === ".json" ? JSON.parse(raw) : parseToml(raw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`failed to parse config file ${path}: ${message}`);
   }
+}
+
+function resolveConfigPath(cliPath?: string): string {
+  if (cliPath) {
+    return cliPath;
+  }
+
+  if (existsSync(defaultConfigFilePath)) {
+    return defaultConfigFilePath;
+  }
+
+  if (existsSync(legacyConfigFilePath)) {
+    return legacyConfigFilePath;
+  }
+
+  return defaultConfigFilePath;
 }
 
 function normalizeDailyTimeWindows(
@@ -229,4 +247,233 @@ function defaultPythonExecutable(): string {
   return platform() === "win32"
     ? ".venv-ddddocr/Scripts/python.exe"
     : ".venv-ddddocr/bin/python";
+}
+
+function parseToml(input: string): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  let currentContext: Record<string, unknown> = root;
+
+  for (const rawLine of input.split(/\r?\n/)) {
+    const line = stripTomlComment(rawLine).trim();
+    if (!line) {
+      continue;
+    }
+
+    if (line.startsWith("[[") && line.endsWith("]]")) {
+      const path = line.slice(2, -2).trim().split(".");
+      currentContext = appendArrayTable(root, path);
+      continue;
+    }
+
+    if (line.startsWith("[") && line.endsWith("]")) {
+      const path = line.slice(1, -1).trim().split(".");
+      currentContext = ensureTable(root, path);
+      continue;
+    }
+
+    const separatorIndex = findAssignmentIndex(line);
+    if (separatorIndex < 0) {
+      throw new Error(`invalid TOML line: ${rawLine}`);
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const valueText = line.slice(separatorIndex + 1).trim();
+    currentContext[key] = parseTomlValue(valueText);
+  }
+
+  return root;
+}
+
+function stripTomlComment(line: string): string {
+  let result = "";
+  let inString = false;
+  let isEscaped = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const current = line[index];
+
+    if (!inString && current === "#") {
+      break;
+    }
+
+    result += current;
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (current === "\\") {
+        isEscaped = true;
+      } else if (current === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === "\"") {
+      inString = true;
+      isEscaped = false;
+    }
+  }
+
+  return result;
+}
+
+function findAssignmentIndex(line: string): number {
+  let inString = false;
+  let isEscaped = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const current = line[index];
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (current === "\\") {
+        isEscaped = true;
+      } else if (current === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (current === "=") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function parseTomlValue(value: string): unknown {
+  if (value.startsWith("\"") && value.endsWith("\"")) {
+    return JSON.parse(value);
+  }
+
+  if (value === "true") {
+    return true;
+  }
+
+  if (value === "false") {
+    return false;
+  }
+
+  if (value.startsWith("[") && value.endsWith("]")) {
+    return parseTomlArray(value.slice(1, -1));
+  }
+
+  if (/^-?\d+$/.test(value)) {
+    return Number(value);
+  }
+
+  throw new Error(`unsupported TOML value: ${value}`);
+}
+
+function parseTomlArray(content: string): unknown[] {
+  const items: string[] = [];
+  let current = "";
+  let depth = 0;
+  let inString = false;
+  let isEscaped = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+
+    if (inString) {
+      current += char;
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === "\\") {
+        isEscaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      current += char;
+      continue;
+    }
+
+    if (char === "[") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+
+    if (char === "]") {
+      depth -= 1;
+      current += char;
+      continue;
+    }
+
+    if (char === "," && depth === 0) {
+      if (current.trim()) {
+        items.push(current.trim());
+      }
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.trim()) {
+    items.push(current.trim());
+  }
+
+  return items.map((item) => parseTomlValue(item));
+}
+
+function ensureTable(root: Record<string, unknown>, path: string[]): Record<string, unknown> {
+  let current = root;
+
+  for (const key of path) {
+    const existing = current[key];
+    if (isPlainObject(existing)) {
+      current = existing;
+      continue;
+    }
+
+    if (Array.isArray(existing)) {
+      const last = existing.at(-1);
+      if (!isPlainObject(last)) {
+        throw new Error(`invalid TOML table path: ${path.join(".")}`);
+      }
+      current = last;
+      continue;
+    }
+
+    const next: Record<string, unknown> = {};
+    current[key] = next;
+    current = next;
+  }
+
+  return current;
+}
+
+function appendArrayTable(root: Record<string, unknown>, path: string[]): Record<string, unknown> {
+  const parent = ensureTable(root, path.slice(0, -1));
+  const key = path[path.length - 1];
+  const existing = parent[key];
+
+  if (existing === undefined) {
+    parent[key] = [];
+  } else if (!Array.isArray(existing)) {
+    throw new Error(`invalid TOML array table path: ${path.join(".")}`);
+  }
+
+  const entry: Record<string, unknown> = {};
+  (parent[key] as unknown[]).push(entry);
+  return entry;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -5,7 +5,7 @@
 当前项目的整体结构已经收敛成“配置文件驱动的自动化工具”，而不是一组靠环境变量和长命令拼起来的临时脚本。一次完整运行按以下顺序展开：
 
 1. `src/cli.ts` 启动，调用 `src/config.ts` 读取配置。
-2. 配置层把 `.env` 中的敏感信息与 `ucas-bot.config.json` 中的公开运行参数合并成内部 `AppConfig`。
+2. 配置层把 `.env` 中的敏感信息与 `ucas-bot.config.toml` 中的公开运行参数合并成内部 `AppConfig`。
 3. `src/workflow.ts` 根据 `runtime.mode` 决定是执行一轮，还是在配置的时间段里持续巡检。
 4. 每一轮执行都会重新创建浏览器上下文，进入登录、建会话、抓讲座、筛选、报名、写状态的主链路。
 5. 登录阶段如果遇到验证码，`src/login.ts` 会调用 `src/captcha.ts`，而验证码识别现在统一通过 Python `ddddocr` 脚本完成。
@@ -14,7 +14,7 @@
 
 可以把当前实现理解为六层：
 
-1. 配置层：统一读取 `.env` 和 `ucas-bot.config.json`
+1. 配置层：统一读取 `.env` 和 `ucas-bot.config.toml`
 2. 调度层：决定单次执行还是定时巡检
 3. 登录层：处理 SEP 登录、验证码和人工验证等待
 4. 页面抓取层：把讲座页变成结构化讲座数据
@@ -23,23 +23,23 @@
 
 ## 配置模型
 
-### `.env` 与 `ucas-bot.config.json`
+### `.env` 与 `ucas-bot.config.toml`
 
 当前配置模型明确划分职责：
 
 1. `.env`
    只保留 `UCAS_USERNAME` 和 `UCAS_PASSWORD` 这类敏感信息。
-2. `ucas-bot.config.json`
+2. `ucas-bot.config.toml`
    作为主配置文件，承载公开运行参数。
 
-这意味着 `.env` 和 `ucas-bot.config.json` 并不重复。程序的运行行为不再通过环境变量描述，而是通过 JSON 配置文件描述；环境变量只承担凭据注入职责。
+这意味着 `.env` 和 `ucas-bot.config.toml` 并不重复。程序的运行行为不再通过环境变量描述，而是通过 TOML 配置文件描述；环境变量只承担凭据注入职责。
 
 ### `src/config.ts`
 
 这个模块负责三件事：
 
 1. 读取 `.env`
-2. 读取 JSON 配置文件
+2. 读取 TOML 配置文件，并兼容旧的 JSON 本地文件
 3. 使用 `zod` 做结构校验，并转成内部统一结构
 
 当前配置层最重要的内部归一化有三类：
