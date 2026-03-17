@@ -129,7 +129,11 @@ export async function runAutomation(config: AppConfig, logger: Logger): Promise<
 
         await page.reload({ waitUntil: "domcontentloaded" }).catch(() => undefined);
         const refreshed = await extractLectureSnapshot(page);
-        quota = refreshed.quota;
+        const refreshedRecordQuota =
+          refreshed.quota.bookedCount === null || refreshed.quota.requiredCount === null
+            ? await extractQuotaFromRecordPage(page, config.humanityLectureUrl)
+            : null;
+        quota = refreshedRecordQuota ?? refreshed.quota;
         state.lastQuota = quota;
 
         if (isQuotaReached(quota)) {

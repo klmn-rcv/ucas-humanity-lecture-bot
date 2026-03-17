@@ -5,7 +5,8 @@ const quotaPatterns: RegExp[] = [
   /已预约(?:次数)?[:：]?\s*(\d+)\s*[\/]\s*(\d+)/,
   /已预约(?:次数)?[:：]?\s*(\d+)\s*次.*?(?:要求|需完成|次数要求)[:：]?\s*(\d+)\s*次/,
   /(?:要求|需完成|次数要求)[:：]?\s*(\d+)\s*次.*?已预约(?:次数)?[:：]?\s*(\d+)\s*次/,
-  /累计听讲座\s*(\d+)\s*次，其中有效\s*(\d+)\s*次.*?有效记录\s*(\d+)\s*次及以上/
+  /累计听讲座\s*(\d+)\s*次，其中有效\s*(\d+)\s*次.*?有效记录\s*(\d+)\s*次及以上/,
+  /有效记录\s*(\d+)\s*次及以上.*?累计听讲座\s*(\d+)\s*次，其中有效\s*(\d+)\s*次/
 ];
 
 export function extractQuota(text: string): ReservationQuota {
@@ -29,6 +30,14 @@ export function extractQuota(text: string): ReservationQuota {
       return {
         bookedCount: Number(matched[2]),
         requiredCount: Number(matched[3]),
+        rawText: matched[0]
+      };
+    }
+
+    if (pattern === quotaPatterns[4]) {
+      return {
+        bookedCount: Number(matched[3]),
+        requiredCount: Number(matched[1]),
         rawText: matched[0]
       };
     }

@@ -10,10 +10,12 @@ export async function registerLecture(
   lecture: LectureRecord,
   logger: Logger
 ): Promise<RegistrationAttemptResult> {
+  let dialogMessage: string | null = null;
   const dialogPromise = page
     .waitForEvent("dialog", { timeout: 2000 })
     .then(async (dialog) => {
-      logger.info("register.dialog", { message: dialog.message() });
+      dialogMessage = dialog.message();
+      logger.info("register.dialog", { message: dialogMessage });
       await dialog.accept();
     })
     .catch(() => undefined);
@@ -61,6 +63,26 @@ export async function registerLecture(
   await clickPossibleConfirmButtons(page, logger);
   await page.waitForTimeout(1500);
 
+  if (dialogMessage) {
+    if (/已超过人数限制|人数已满|预约已满|名额已满|满额/.test(dialogMessage)) {
+      return {
+        lectureId: lecture.id,
+        title: lecture.title,
+        outcome: "full",
+        detail: dialogMessage
+      };
+    }
+
+    if (/成功|已预约|已报名|已经预约过/.test(dialogMessage)) {
+      return {
+        lectureId: lecture.id,
+        title: lecture.title,
+        outcome: "registered",
+        detail: dialogMessage
+      };
+    }
+  }
+
   const text = normalizeWhitespace(await page.locator("body").innerText().catch(() => ""));
   if (/成功|已预约|已报名/.test(text)) {
     return {
@@ -84,7 +106,7 @@ export async function registerLecture(
     lectureId: lecture.id,
     title: lecture.title,
     outcome: "unknown",
-    detail: "点击后未识别出明确结果，需要人工检查日志和页面快照"
+    detail: dialogMessage ?? "点击后未识别出明确结果，需要人工检查日志和页面快照"
   };
 }
 
