@@ -1,6 +1,6 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 
@@ -21,8 +21,10 @@ describe("config loader", () => {
             dryRun: false,
             statePath: "tmp/state.json",
             schedule: {
-              startHour: 8,
-              endHour: 18,
+              periods: [
+                ["08:00", "12:00"],
+                ["14:00", "18:00"]
+              ],
               intervalMinutes: 60,
               runImmediatelyOnStart: false
             }
@@ -31,13 +33,22 @@ describe("config loader", () => {
             level: "debug"
           },
           captcha: {
-            langPath: "https://example.com/tessdata",
+            pythonExecutable: "./custom-python",
             maxAttempts: 5
           },
           filter: {
             timeWindows: [
-              { weekday: 1, start: "17:00" },
-              { weekday: 3 }
+              {
+                weekday: 1,
+                periods: [
+                  ["17:00", "18:00"],
+                  ["20:00", "21:00"]
+                ]
+              },
+              {
+                weekday: 3,
+                periods: [["00:00", "23:59"]]
+              }
             ]
           }
         },
@@ -51,10 +62,23 @@ describe("config loader", () => {
     expect(config.schedule.runImmediatelyOnStart).toBe(false);
     expect(config.logLevel).toBe("debug");
     expect(config.statePath.endsWith("tmp/state.json")).toBe(true);
-    expect(config.captcha.langPath).toBe("https://example.com/tessdata");
+    expect(config.schedule.periods).toEqual([
+      { startMinutes: 8 * 60, endMinutes: 12 * 60 },
+      { startMinutes: 14 * 60, endMinutes: 18 * 60 }
+    ]);
+    expect(config.captcha.pythonExecutable).toBe(resolve("./custom-python"));
     expect(config.timeWindows).toEqual([
-      { weekday: 1, startMinutes: 17 * 60, endMinutes: null },
-      { weekday: 3, startMinutes: null, endMinutes: null }
+      {
+        weekday: 1,
+        ranges: [
+          { startMinutes: 17 * 60, endMinutes: 18 * 60 },
+          { startMinutes: 20 * 60, endMinutes: 21 * 60 }
+        ]
+      },
+      {
+        weekday: 3,
+        ranges: [{ startMinutes: 0, endMinutes: 23 * 60 + 59 }]
+      }
     ]);
   });
 
@@ -103,5 +127,32 @@ describe("config loader", () => {
     );
 
     expect(() => loadConfig(["--config", configPath])).toThrow();
+  });
+
+  it("rejects overlapping schedule periods", () => {
+    vi.stubEnv("UCAS_USERNAME", "user");
+    vi.stubEnv("UCAS_PASSWORD", "pass");
+
+    const tempDir = mkdtempSync(join(tmpdir(), "ucas-config-"));
+    const configPath = join(tempDir, "ucas-bot.config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          runtime: {
+            schedule: {
+              periods: [
+                ["08:00", "12:00"],
+                ["11:00", "18:00"]
+              ]
+            }
+          }
+        },
+        null,
+        2
+      )
+    );
+
+    expect(() => loadConfig(["--config", configPath])).toThrow(/overlapping/);
   });
 });

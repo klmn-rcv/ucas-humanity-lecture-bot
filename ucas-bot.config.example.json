@@ -12,30 +12,31 @@
     "dryRun": true,
     "statePath": ".cache/lecture-state.json",
     "schedule": {
-      "startHour": 8,
-      "endHour": 18,
+      "periods": [
+        ["08:00", "18:00"]
+      ],
       "intervalMinutes": 60,
       "runImmediatelyOnStart": true
     }
   },
   "captcha": {
     "enabled": true,
-    "language": "eng",
     "maxAttempts": 3,
-    "langPath": "https://tessdata.projectnaptha.com/4.0.0"
+    "pythonExecutable": ".venv-ddddocr/bin/python"
   },
   "filter": {
     "timeWindows": [
       {
         "weekday": 1,
-        "start": "17:00"
+        "periods": [["17:00", "23:59"]]
       },
       {
         "weekday": 2,
-        "start": "19:00"
+        "periods": [["19:00", "23:59"]]
       },
       {
-        "weekday": 3
+        "weekday": 3,
+        "periods": [["00:00", "23:59"]]
       }
     ]
   }

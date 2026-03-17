@@ -1,4 +1,4 @@
-import type { BotState, LectureDecision, LectureRecord, TimeWindowRule } from "./types.js";
+import type { BotState, DailyTimeWindows, LectureDecision, LectureRecord } from "./types.js";
 import { isQuotaReached } from "./quota.js";
 import { getStoredLectureState } from "./state-store.js";
 import { explainTimeRule, isAllowedLectureTime, parseLectureStart } from "./time-window.js";
@@ -8,7 +8,7 @@ export function decideLectures(
   state: BotState,
   seenInRun: Set<string>,
   quotaReached: boolean,
-  timeWindows: TimeWindowRule[]
+  timeWindows: DailyTimeWindows[]
 ): LectureDecision[] {
   if (quotaReached) {
     return lectures.map((lecture) => ({
@@ -25,7 +25,7 @@ function decideLecture(
   lecture: LectureRecord,
   state: BotState,
   seenInRun: Set<string>,
-  timeWindows: TimeWindowRule[]
+  timeWindows: DailyTimeWindows[]
 ): LectureDecision {
   const storedState = getStoredLectureState(state, lecture.id);
   if (storedState) {
@@ -83,7 +83,7 @@ export function summarizeDecisionReason(decision: LectureDecision): string {
 
 export function summarizeDecisionReasonWithRules(
   decision: LectureDecision,
-  timeWindows: TimeWindowRule[]
+  timeWindows: DailyTimeWindows[]
 ): string {
   switch (decision.reason) {
     case "quota-reached":
@@ -98,9 +98,7 @@ export function summarizeDecisionReasonWithRules(
       }
 
       const parsed = parseLectureStart(decision.lecture.startTimeText);
-      return parsed
-        ? explainTimeRule(parsed.date, timeWindows)
-        : "开始时间格式无法解析，默认跳过";
+      return parsed ? explainTimeRule(parsed.date, timeWindows) : "开始时间格式无法解析，默认跳过";
     case "no-action":
       return "页面上未发现可点击的报名入口";
     case "duplicate-in-run":

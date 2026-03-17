@@ -14,7 +14,8 @@ async function main(): Promise<void> {
     headless: config.headless,
     statePath: config.statePath,
     schedule: config.schedule,
-    timeWindowCount: config.timeWindows.length
+    timeWindowDayCount: config.timeWindows.length,
+    timeWindowRangeCount: config.timeWindows.reduce((count, rule) => count + rule.ranges.length, 0)
   });
 
   const summary = await runAutomation(config, logger);

@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { isAllowedLectureTime, parseLectureStart } from "../src/time-window.js";
 
 const defaultRules = [
-  { weekday: 1, startMinutes: 17 * 60, endMinutes: null },
-  { weekday: 2, startMinutes: 19 * 60, endMinutes: null },
-  { weekday: 3, startMinutes: null, endMinutes: null }
+  { weekday: 1, ranges: [{ startMinutes: 17 * 60, endMinutes: 23 * 60 + 59 }] },
+  { weekday: 2, ranges: [{ startMinutes: 19 * 60, endMinutes: 23 * 60 + 59 }] },
+  { weekday: 3, ranges: [{ startMinutes: 0, endMinutes: 23 * 60 + 59 }] }
 ];
 
 describe("time window rules", () => {
@@ -38,13 +38,26 @@ describe("time window rules", () => {
     expect(isAllowedLectureTime(parsed!.date, defaultRules)).toBe(false);
   });
 
-  it("supports custom config-based time windows", () => {
-    const parsed = parseLectureStart("2026-03-19 15:00");
-    expect(parsed).not.toBeNull();
-    expect(
-      isAllowedLectureTime(parsed!.date, [
-        { weekday: 4, startMinutes: 14 * 60, endMinutes: 16 * 60 }
-      ])
-    ).toBe(true);
+  it("supports multiple discontinuous periods in one day", () => {
+    const morning = parseLectureStart("2026-03-19 10:30");
+    const noon = parseLectureStart("2026-03-19 12:30");
+    const evening = parseLectureStart("2026-03-19 15:30");
+    expect(morning).not.toBeNull();
+    expect(noon).not.toBeNull();
+    expect(evening).not.toBeNull();
+
+    const rules = [
+      {
+        weekday: 4,
+        ranges: [
+          { startMinutes: 9 * 60, endMinutes: 11 * 60 },
+          { startMinutes: 15 * 60, endMinutes: 17 * 60 }
+        ]
+      }
+    ];
+
+    expect(isAllowedLectureTime(morning!.date, rules)).toBe(true);
+    expect(isAllowedLectureTime(noon!.date, rules)).toBe(false);
+    expect(isAllowedLectureTime(evening!.date, rules)).toBe(true);
   });
 });

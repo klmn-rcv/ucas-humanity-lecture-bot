@@ -3,24 +3,26 @@ export type RunMode = "single" | "scheduled";
 
 export type TerminalLectureState = "booked" | "full";
 
+export interface TimeRange {
+  startMinutes: number;
+  endMinutes: number;
+}
+
 export interface CaptchaConfig {
   enabled: boolean;
-  language: string;
   maxAttempts: number;
-  langPath: string;
+  pythonExecutable: string;
 }
 
 export interface ScheduledRuntimeConfig {
-  startHour: number;
-  endHour: number;
   intervalMinutes: number;
   runImmediatelyOnStart: boolean;
+  periods: TimeRange[];
 }
 
-export interface TimeWindowRule {
+export interface DailyTimeWindows {
   weekday: number;
-  startMinutes: number | null;
-  endMinutes: number | null;
+  ranges: TimeRange[];
 }
 
 export interface AppConfig {
@@ -35,7 +37,7 @@ export interface AppConfig {
   dryRun: boolean;
   runMode: RunMode;
   schedule: ScheduledRuntimeConfig;
-  timeWindows: TimeWindowRule[];
+  timeWindows: DailyTimeWindows[];
   logLevel: LogLevel;
   captcha: CaptchaConfig;
 }

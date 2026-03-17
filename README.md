@@ -1,42 +1,67 @@
 # UCAS 人文讲座自动报名工具
 
-这个项目使用 `Playwright + TypeScript` 自动登录国科大 SEP / 选课系统，抓取人文讲座列表，按个人配置的时间条件筛选候选讲座，并在需要时自动报名。
+这个项目使用 `Playwright + TypeScript + ddddocr` 自动登录国科大 SEP / 选课系统，抓取人文讲座列表，按个人配置的时间规则筛选讲座，并在命中条件时自动报名。
 
 当前版本支持：
 
 1. 自动登录 SEP，并通过门户入口建立人文讲座系统会话。
-2. 自动抓取讲座列表、识别“已预约 / 人数已满”等终态。
-3. 读取已预约次数与总次数要求，达到要求后自动停止。
-4. 通过配置文件定义时间筛选规则。
-5. 通过配置文件开启“每天 8:00 到 18:00 每小时巡检一次”的定时模式。
-6. 在出现图形验证码时自动识别；如果触发新设备邮箱验证，支持在 `headful` 模式下等待人工完成。
+2. 自动处理图形验证码，验证码识别统一使用本地 `ddddocr`。
+3. 自动抓取讲座列表，识别“已预约 / 人数已满 / 已结束”等状态。
+4. 自动读取“累计听讲座次数 / 有效次数 / 总次数要求”，达到要求后停止报名。
+5. 通过配置文件定义筛选时间段。
+6. 通过配置文件开启“每天多个时间段内按固定间隔巡检”的运行模式。
+7. 通过本地状态文件跳过已经确认终态的讲座，避免重复访问和重复报名。
 
 ## 环境要求
 
 1. Node.js `>= 22`
 2. `npm`
-3. Playwright Chromium 浏览器
+3. Python `>= 3.10`
+4. Playwright Chromium 浏览器
 
-安装依赖：
+安装 Node 依赖和浏览器：
 
 ```bash
 npm install
 npx playwright install chromium
 ```
 
-可选增强：
+## 安装 ddddocr
 
-1. 如果你在校外网络下经常遇到验证码，可以额外准备一个本地 Python 环境并安装 `ddddocr`。
-2. 当前项目会在检测到 `.venv-ddddocr/bin/python` 存在时自动启用该 OCR 候选；没有该环境时也能运行，只是验证码识别完全依赖 `tesseract.js`。
+验证码识别现在只依赖 `ddddocr`，不再保留 `tesseract.js` 备用路径。因此第一次使用前需要准备本地 Python 环境。
 
-## 配置方式
+### macOS / Linux
 
-项目使用双层配置：
+```bash
+python3 -m venv .venv-ddddocr
+. .venv-ddddocr/bin/activate
+pip install -U pip
+pip install ddddocr
+```
 
-1. `.env`：只存敏感信息，例如账号密码。
-2. `ucas-bot.config.json`：存非敏感运行配置，例如运行模式、巡检时间和筛选规则。
+### Windows PowerShell
 
-### 1. 创建 `.env`
+```powershell
+py -3 -m venv .venv-ddddocr
+.\.venv-ddddocr\Scripts\Activate.ps1
+python -m pip install -U pip
+pip install ddddocr
+```
+
+如果你的 Python 可执行文件不在默认路径，可以在 `ucas-bot.config.json` 里通过 `captcha.pythonExecutable` 指定。
+
+## 配置模型
+
+项目使用两层配置，但两者不重复：
+
+1. `.env`
+   只放敏感信息，也就是账号和密码。
+2. `ucas-bot.config.json`
+   只放公开运行参数，也就是运行模式、时间段、验证码参数、日志级别和筛选条件。
+
+结论很简单：`.env` 不是主配置文件，`ucas-bot.config.json` 才是。你平时要调整运行行为时，只改 `ucas-bot.config.json`；只有账号密码变化时才改 `.env`。
+
+## 第一步：创建 `.env`
 
 复制模板：
 
@@ -44,20 +69,14 @@ npx playwright install chromium
 cp .env.example .env
 ```
 
-填写账号密码：
+填写真实账号密码：
 
 ```env
 UCAS_USERNAME=your_ucas_username
 UCAS_PASSWORD=your_ucas_password
 ```
 
-如果你想把公开配置文件放到其他路径，也可以额外设置：
-
-```env
-UCAS_CONFIG_PATH=./ucas-bot.config.json
-```
-
-### 2. 创建配置文件
+## 第二步：创建 `ucas-bot.config.json`
 
 复制模板：
 
@@ -65,51 +84,330 @@ UCAS_CONFIG_PATH=./ucas-bot.config.json
 cp ucas-bot.config.example.json ucas-bot.config.json
 ```
 
-默认模板包含以下几类配置：
+默认模板如下：
 
-1. `logging`：日志级别。
-2. `targets`：SEP 登录地址和讲座页地址。
-3. `runtime`：运行模式、`dryRun`、是否显示浏览器、状态文件路径、定时巡检设置。
-4. `captcha`：验证码识别开关与重试上限。
-5. `filter`：时间筛选规则。
-
-## 运行方式
-
-### 单次运行
-
-按配置文件执行一次：
-
-```bash
-npm start
+```json
+{
+  "logging": {
+    "level": "info"
+  },
+  "targets": {
+    "loginUrl": "https://sep.ucas.ac.cn/?loginFrom=/appStore",
+    "lectureUrl": "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture"
+  },
+  "runtime": {
+    "mode": "single",
+    "headless": true,
+    "dryRun": true,
+    "statePath": ".cache/lecture-state.json",
+    "schedule": {
+      "periods": [["08:00", "18:00"]],
+      "intervalMinutes": 60,
+      "runImmediatelyOnStart": true
+    }
+  },
+  "captcha": {
+    "enabled": true,
+    "maxAttempts": 3,
+    "pythonExecutable": ".venv-ddddocr/bin/python"
+  },
+  "filter": {
+    "timeWindows": [
+      {
+        "weekday": 1,
+        "periods": [["17:00", "23:59"]]
+      },
+      {
+        "weekday": 2,
+        "periods": [["19:00", "23:59"]]
+      },
+      {
+        "weekday": 3,
+        "periods": [["00:00", "23:59"]]
+      }
+    ]
+  }
+}
 ```
 
-临时只做候选输出，不执行真实报名：
+## 配置项说明
 
-```bash
-npm start -- --dry-run
+### `logging`
+
+```json
+{
+  "logging": {
+    "level": "debug"
+  }
+}
 ```
 
-临时执行真实报名：
+可选值：
 
-```bash
-npm start -- --no-dry-run
+1. `debug`
+2. `info`
+3. `warn`
+4. `error`
+
+### `targets`
+
+```json
+{
+  "targets": {
+    "loginUrl": "https://sep.ucas.ac.cn/?loginFrom=/appStore",
+    "lectureUrl": "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture"
+  }
+}
 ```
 
-临时显示浏览器窗口：
+通常不需要改。只有站点入口地址变动时才需要覆盖。
 
-```bash
-npm start -- --headful
+### `runtime`
+
+#### `runtime.mode`
+
+```json
+{
+  "runtime": {
+    "mode": "single"
+  }
+}
 ```
 
-如果你用了自定义配置文件路径：
+可选值：
 
-```bash
-npm start -- --config ./path/to/ucas-bot.config.json
+1. `single`
+   执行一轮后退出。
+2. `scheduled`
+   在配置的时间段内持续巡检。
+
+#### `runtime.headless`
+
+```json
+{
+  "runtime": {
+    "headless": false
+  }
+}
 ```
 
-### 定时巡检模式
+`false` 表示显示浏览器窗口。第一次在校外网络使用时，建议先改成 `false`。
 
-把配置文件中的 `runtime.mode` 改成 `scheduled`：
+#### `runtime.dryRun`
+
+```json
+{
+  "runtime": {
+    "dryRun": true
+  }
+}
+```
+
+`true` 只抓取和筛选，不点击真实报名。  
+`false` 会对命中的候选讲座执行真实报名尝试。
+
+#### `runtime.statePath`
+
+```json
+{
+  "runtime": {
+    "statePath": ".cache/lecture-state.json"
+  }
+}
+```
+
+状态文件会记录：
+
+1. 已预约讲座
+2. 已满员讲座
+3. 最近一次读到的次数统计
+
+#### `runtime.schedule`
+
+```json
+{
+  "runtime": {
+    "mode": "scheduled",
+    "schedule": {
+      "periods": [
+        ["08:00", "12:00"],
+        ["14:00", "18:00"]
+      ],
+      "intervalMinutes": 60,
+      "runImmediatelyOnStart": true
+    }
+  }
+}
+```
+
+字段说明：
+
+1. `periods`
+   每个数组代表一个时间段，格式固定为 `["开始时间", "结束时间"]`。
+2. `intervalMinutes`
+   在这些时间段里按多少分钟巡检一次。
+3. `runImmediatelyOnStart`
+   如果程序启动时已经处于某个可运行时间段内，是否立刻先跑一轮。
+
+这意味着你可以在一天内配置多个不连续时段。例如上面的例子会在 `08:00-12:00` 和 `14:00-18:00` 两段时间内每小时检查一次。
+
+### `captcha`
+
+```json
+{
+  "captcha": {
+    "enabled": true,
+    "maxAttempts": 5,
+    "pythonExecutable": ".venv-ddddocr/bin/python"
+  }
+}
+```
+
+字段说明：
+
+1. `enabled`
+   是否启用验证码识别。
+2. `maxAttempts`
+   登录阶段最多尝试多少次验证码，当前硬上限是 `5`。
+3. `pythonExecutable`
+   用来执行 `ddddocr` 的 Python 路径。
+
+Windows 示例：
+
+```json
+{
+  "captcha": {
+    "pythonExecutable": ".venv-ddddocr/Scripts/python.exe"
+  }
+}
+```
+
+### `filter.timeWindows`
+
+当前版本只支持按时间过滤。
+
+```json
+{
+  "filter": {
+    "timeWindows": [
+      {
+        "weekday": 1,
+        "periods": [["17:00", "23:59"]]
+      },
+      {
+        "weekday": 2,
+        "periods": [["19:00", "23:59"]]
+      },
+      {
+        "weekday": 3,
+        "periods": [["00:00", "23:59"]]
+      }
+    ]
+  }
+}
+```
+
+字段说明：
+
+1. `weekday`
+   JavaScript 星期编号，`0=周日`，`1=周一`，`2=周二`，依此类推。
+2. `periods`
+   该星期允许报名的时间段数组。每个时间段都写成 `["开始时间", "结束时间"]`。
+
+你现在要求的默认筛选规则等价于：
+
+1. 周一 `17:00-23:59`
+2. 周二 `19:00-23:59`
+3. 周三 `00:00-23:59`
+
+如果你想改成“周二只看两个不连续时段，周三上午也看一段”，可以这样写：
+
+```json
+{
+  "filter": {
+    "timeWindows": [
+      {
+        "weekday": 2,
+        "periods": [
+          ["09:00", "11:00"],
+          ["19:00", "21:30"]
+        ]
+      },
+      {
+        "weekday": 3,
+        "periods": [["08:00", "12:00"]]
+      }
+    ]
+  }
+}
+```
+
+## 推荐运行方式
+
+仓库已经封装了跨平台脚本。推荐优先使用脚本，而不是手敲 `npm start`。
+
+### macOS / Linux
+
+前台运行：
+
+```bash
+./scripts/run-bot.sh
+```
+
+只做 dry-run：
+
+```bash
+./scripts/run-bot.sh --dry-run
+```
+
+显示浏览器窗口：
+
+```bash
+./scripts/run-bot.sh --headful
+```
+
+真实报名：
+
+```bash
+./scripts/run-bot.sh --no-dry-run
+```
+
+### Windows PowerShell
+
+前台运行：
+
+```powershell
+.\scripts\run-bot.ps1
+```
+
+只做 dry-run：
+
+```powershell
+.\scripts\run-bot.ps1 --dry-run
+```
+
+显示浏览器窗口：
+
+```powershell
+.\scripts\run-bot.ps1 --headful
+```
+
+真实报名：
+
+```powershell
+.\scripts\run-bot.ps1 --no-dry-run
+```
+
+## 校园网内如何操作
+
+校园网内通常更容易直接登录 SEP，也更不容易触发验证码。推荐流程：
+
+1. 先把 `runtime.dryRun` 设为 `true`，或者用 `--dry-run` 做一次验证。
+2. 确认能正常进入讲座页，并且候选讲座符合预期。
+3. 再切换到真实报名模式。
+4. 如果要长期挂着巡检，把 `runtime.mode` 改成 `scheduled`。
+
+一个典型的定时配置如下：
 
 ```json
 {
@@ -118,8 +416,7 @@ npm start -- --config ./path/to/ucas-bot.config.json
     "headless": true,
     "dryRun": false,
     "schedule": {
-      "startHour": 8,
-      "endHour": 18,
+      "periods": [["08:00", "18:00"]],
       "intervalMinutes": 60,
       "runImmediatelyOnStart": true
     }
@@ -127,76 +424,9 @@ npm start -- --config ./path/to/ucas-bot.config.json
 }
 ```
 
-含义如下：
+## 校园网外如何操作
 
-1. 程序会在每天 `08:00-18:00` 之间按配置的间隔调度。
-2. 默认模板使用 `60` 分钟间隔，也就是每小时检查一次。
-3. 在巡检过程中发现新的符合条件讲座时，会按 `dryRun` 配置决定是仅输出候选，还是自动报名。
-4. 进程不会在单轮完成后退出，而是持续等待下一次巡检时刻。
-
-## 时间筛选规则配置
-
-当前版本仅支持“按时间过滤”。
-
-模板中的默认规则等价于：
-
-1. 周一 `17:00` 及以后允许。
-2. 周二 `19:00` 及以后允许。
-3. 周三全天允许。
-
-配置示例：
-
-```json
-{
-  "filter": {
-    "timeWindows": [
-      { "weekday": 1, "start": "17:00" },
-      { "weekday": 2, "start": "19:00" },
-      { "weekday": 3 }
-    ]
-  }
-}
-```
-
-字段说明：
-
-1. `weekday`：使用 JavaScript 星期编号，`0=周日`，`1=周一`，`2=周二`，依此类推。
-2. `start`：当天允许报名的最早时间，格式为 `HH:MM`。
-3. `end`：可选，当天允许报名的最晚时间，格式为 `HH:MM`。
-
-例如，如果你想改成“只允许周四 14:00-16:30”：
-
-```json
-{
-  "filter": {
-    "timeWindows": [
-      { "weekday": 4, "start": "14:00", "end": "16:30" }
-    ]
-  }
-}
-```
-
-## 校园网内如何运行
-
-如果你在校园网内运行，通常更容易直接进入登录和讲座页，验证码出现概率也更低。推荐流程：
-
-1. 先用 `dry-run` 验证配置是否正确：
-
-```bash
-npm start -- --dry-run
-```
-
-2. 如果日志正常、候选讲座符合预期，再把配置文件里的 `runtime.dryRun` 改成 `false`，或用：
-
-```bash
-npm start -- --no-dry-run
-```
-
-3. 如果你想长期挂着巡检，把 `runtime.mode` 改成 `scheduled`。
-
-## 校园网外如何运行
-
-如果你不在校园网内，可能出现两类额外情况：
+校园网外可能遇到两类额外情况：
 
 1. 图形验证码
 2. 新设备邮箱验证
@@ -206,39 +436,37 @@ npm start -- --no-dry-run
 1. 第一次先用可见浏览器运行：
 
 ```bash
-npm start -- --headful --dry-run
+./scripts/run-bot.sh --headful --dry-run
 ```
 
-2. 如果出现图形验证码，程序会尝试自动识别并填写。
-3. 如果跳到新设备验证页面，程序会在 `headful` 模式下保持窗口不关闭；此时需要你手动完成邮箱验证。
-4. 完成一次新设备验证后，再重新运行同一命令确认是否能稳定回到讲座页。
-5. 确认链路稳定后，再切换到真实报名或后台巡检模式。
+Windows：
 
-注意：
+```powershell
+.\scripts\run-bot.ps1 --headful --dry-run
+```
 
-1. 如果你在校外长期跑后台巡检，但当前网络环境经常触发新设备验证，那么纯后台 `headless` 模式并不可靠，因为邮箱验证必须人工完成。
-2. 比较稳妥的做法是先用 `headful` 模式完成一次设备授权，再切到后台模式。
+2. 如果出现验证码，程序会用 `ddddocr` 自动识别并填写。
+3. 如果出现新设备邮箱验证，必须由你手工完成邮箱验证。
+4. 程序在 `headful` 模式下会等待你完成验证；纯后台 `headless` 模式无法自动处理邮箱验证。
+5. 完成一次设备授权后，再重新执行同一命令，确认已经能稳定进入讲座页。
+6. 确认链路稳定后，再切换到真实报名或后台巡检模式。
 
 ## 后台运行
 
-后台运行前，建议先确认以下事项：
-
-1. 配置文件已经设为 `scheduled` 模式。
-2. 你已经至少成功做过一次本地前台验证。
-3. 如果校外网络会触发邮箱验证，先用 `headful` 完成验证，再考虑后台运行。
+后台运行前，建议先完成一次前台验证，确认当前网络环境不会立刻触发你无法人工处理的二次验证。
 
 ### macOS / Linux
 
-先准备日志目录：
+后台启动：
 
 ```bash
-mkdir -p logs
+./scripts/run-bot-background.sh
 ```
 
-然后用 `nohup` 后台运行：
+带参数后台启动：
 
 ```bash
-nohup npm start > logs/bot.log 2>&1 &
+./scripts/run-bot-background.sh --headful
 ```
 
 查看日志：
@@ -247,28 +475,18 @@ nohup npm start > logs/bot.log 2>&1 &
 tail -f logs/bot.log
 ```
 
-更长期的做法：
+查看进程号：
 
-1. 你也可以用 `tmux` / `screen` 保持进程。
-2. 如果要开机自启，建议自己再封装成 `systemd` 服务或 `launchd` 任务；当前仓库不会自动生成这些系统级文件。
+```bash
+cat logs/bot.pid
+```
 
 ### Windows PowerShell
 
-先准备日志目录：
+后台启动：
 
 ```powershell
-New-Item -ItemType Directory -Force logs | Out-Null
-```
-
-然后后台启动：
-
-```powershell
-Start-Process -FilePath "npm.cmd" `
-  -ArgumentList "start" `
-  -WorkingDirectory (Get-Location) `
-  -RedirectStandardOutput "logs\\bot.log" `
-  -RedirectStandardError "logs\\bot.err" `
-  -WindowStyle Hidden
+.\scripts\run-bot-background.ps1
 ```
 
 查看日志：
@@ -277,22 +495,25 @@ Start-Process -FilePath "npm.cmd" `
 Get-Content .\logs\bot.log -Wait
 ```
 
-更长期的做法：
+查看进程号：
 
-1. 对于每天固定时间自动启动，建议使用“任务计划程序”。
-2. 如果你希望开机自启，也建议通过任务计划程序或 NSSM 等工具自行包装；当前仓库不自动生成系统服务配置。
+```powershell
+Get-Content .\logs\bot.pid
+```
+
+如果你想每天固定时间自动启动，更适合用 `systemd` / `launchd` / Windows 任务计划程序把这些脚本再包一层。当前仓库不自动生成系统服务文件。
 
 ## 日志与状态文件
 
-程序输出 JSON 行日志，适合重定向到文件或被其他日志工具读取。
+程序输出 JSON 行日志，适合重定向到文件。
 
-状态文件默认是 `.cache/lecture-state.json`，主要保存：
+默认状态文件是 `.cache/lecture-state.json`，主要保存：
 
 1. 已预约讲座
-2. 人数已满讲座
-3. 最近一次读取到的预约次数信息
+2. 已满员讲座
+3. 最近一次读取到的次数统计
 
-这意味着程序可以跨运行跳过已经确认是终态的讲座，避免重复点击。
+这会让程序在后续运行里直接跳过已知终态讲座。
 
 ## 测试
 
@@ -301,9 +522,10 @@ npm run typecheck
 npm test
 ```
 
-## 发布前注意事项
+## 发布到 GitHub 前不要提交
 
-1. 不要提交 `.env`
-2. 不要提交 `ucas-bot.config.json`
-3. 不要提交 `.cache/`、日志目录和本地虚拟环境
-4. 公开仓库应只保留 `.env.example` 和 `ucas-bot.config.example.json` 作为模板
+1. `.env`
+2. `ucas-bot.config.json`
+3. `.cache/`
+4. `logs/`
+5. `.venv-ddddocr/`

@@ -2,50 +2,54 @@
 
 ## 完成情况
 
-本轮 `github-release-prep` 已完成。项目当前已经从“面向本地试验的脚本仓库”整理成“适合公开发布到 GitHub 的自动化项目”，并新增了按配置文件驱动的白天巡检模式。
+本轮 `github-release-prep` 已继续完成，并在原有 GitHub 发布整理的基础上补齐了新的四项要求：
+
+1. 验证码实现统一切换到 `ddddocr`
+2. 主配置模型继续收敛到 `ucas-bot.config.json`
+3. 巡检与筛选时间段都改成数组时间段模型
+4. `macOS/Linux` 与 `Windows` 的启动命令都封装成了脚本
 
 ## 本轮主要改动
 
-1. 配置模型改成双层结构：
-   - `.env` 只保留 UCAS 账号密码等敏感信息。
-   - `ucas-bot.config.json` 负责运行模式、调度时间、日志级别、验证码参数和筛选条件。
-2. 新增了 `ucas-bot.config.example.json` 作为公开配置模板。
-3. 新增了 `src/schedule.ts`，并将工作流改造成支持 `single` 与 `scheduled` 两种模式。
-4. 新的定时模式支持在每天 8:00 到 18:00 之间按配置的时间间隔执行巡检，默认模板使用每 60 分钟一次。
-5. 原先写死在代码中的时间筛选规则已经改为由配置文件驱动。
-6. `.env.example` 已重建，README 已重写，明确区分校园网内、校园网外、后台运行和双层配置步骤。
-7. `.gitignore` 已收紧，新增对 `ucas-bot.config.json`、日志目录和本地虚拟环境的忽略。
-8. 删除了只用于开发实验的 `scripts/ocr-experiment.mjs`，保留运行时仍然会实际调用的 `scripts/ddddocr-experiment.py`。
+1. 删除了 `tesseract.js` 路径，`src/captcha.ts` 现在只调用 `scripts/solve-captcha.py`，由 Python `ddddocr` 执行验证码识别。
+2. 更新了 `package.json` 与 `package-lock.json`，移除了 `tesseract.js` 依赖。
+3. 配置模型继续明确为：
+   - `.env` 只放账号密码
+   - `ucas-bot.config.json` 作为主配置文件，承载运行参数
+4. `runtime.schedule.periods` 改成 `["开始时间", "结束时间"]` 的数组模型，支持同一天多个不连续巡检时段。
+5. `filter.timeWindows[*].periods` 同样改成数组时间段模型，支持同一天多个不连续筛选时段。
+6. 新增跨平台运行脚本：
+   - `scripts/run-bot.sh`
+   - `scripts/run-bot-background.sh`
+   - `scripts/run-bot.ps1`
+   - `scripts/run-bot-background.ps1`
+7. 把原来的 `scripts/ddddocr-experiment.py` 重命名为正式运行脚本 `scripts/solve-captcha.py`。
+8. 重写了 `README.md`、`.env.example` 和 `ucas-bot.config.example.json`，使其适合公开 GitHub 仓库直接使用。
 
 ## 验证结果
 
 本轮已完成的本地验证：
 
 1. `npm run typecheck` 通过。
-2. `npm test` 通过，当前共 17 个测试。
-3. 新增测试覆盖了：
-   - 配置文件加载
-   - 定时调度时间计算
-   - 配置驱动的时间筛选规则
+2. `npm test` 通过，当前共 19 个测试。
+3. 新增或更新的测试覆盖了：
+   - 数组化调度时间段
+   - 数组化筛选时间段
+   - 新的公开配置结构
+   - 验证码重试上限约束
 
 ## 当前仓库状态
 
-当前公开仓库视角下的使用方式已经明确：
+当前公开仓库已经具备以下发布特征：
 
-1. 用户复制 `.env.example` 填写敏感信息。
-2. 用户复制 `ucas-bot.config.example.json` 生成自己的公开配置文件。
-3. 单次运行和定时巡检都通过同一套配置文件驱动。
-4. 命令行参数只保留少量临时覆盖用途，而不再承担主要配置职责。
+1. 公开文档不再同时解释两套 OCR 实现。
+2. 公开配置文件已经成为主要运行配置入口。
+3. 用户可以直接通过脚本启动前台或后台运行，而不必自己拼接跨平台命令。
+4. README 已明确说明校园网内、校园网外、验证码、邮箱验证、定时巡检和时间段配置方法。
 
 ## 剩余风险
 
-1. 这轮没有再次做真实站点现场验证，因此新的定时模式只做了本地逻辑与测试验证，没有做一整天的线上长跑验证。
-2. 校外网络下如果再次触发新设备邮箱验证，后台 `headless` 模式依然无法自动处理，该风险只能通过 README 指导用户先做一次 `headful` 验证来缓解。
-3. 过滤规则虽然已经配置化，但当前仍然只支持时间窗口。
-4. `ddddocr` 仍然依赖仓库外的本地 Python 虚拟环境；没有该环境时，系统会退回到纯 `tesseract.js` 路径。
-
-## 建议的下一步
-
-1. 如果准备正式公开发布仓库，可以再做一次基于当前 README 的“从零配置演练”，确认陌生机器上按文档能顺利跑通。
-2. 如果后续要提高后台巡检稳定性，可以再考虑是否需要提供 `systemd`、`launchd` 或 Windows 任务计划程序示例文件。
-3. 如果后续要扩展筛选能力，优先沿用当前配置文件模型继续增加新规则，而不是重新回到源码常量。
+1. 这轮没有再次做真实站点现场登录验证，因此 `ddddocr-only` 路径在本轮中只做了本地逻辑和测试验证，没有重新做线上 live run。
+2. `Windows` 脚本是在当前仓库内完成静态封装，但没有在当前执行环境里做实际启动验证。
+3. 后台运行仍然无法自动处理 SEP 的邮箱验证，用户仍需先做一次前台授权。
+4. 当前筛选规则虽然已经支持多时间段，但仍只支持时间维度。

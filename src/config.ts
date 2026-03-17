@@ -1,9 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
+import { platform } from "node:os";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import dotenv from "dotenv";
 import { z } from "zod";
-import type { AppConfig, LogLevel, RunMode, TimeWindowRule } from "./types.js";
+import type {
+  AppConfig,
+  DailyTimeWindows,
+  LogLevel,
+  RunMode,
+  TimeRange
+} from "./types.js";
 
 dotenv.config();
 
@@ -13,16 +20,19 @@ const defaultConfigFilePath = "ucas-bot.config.json";
 const defaultLoginUrl = "https://sep.ucas.ac.cn/?loginFrom=/appStore";
 const defaultLectureUrl = "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture";
 const defaultStatePath = ".cache/lecture-state.json";
+const defaultSchedulePeriods = [["08:00", "18:00"]] as const;
 const defaultTimeWindows = [
-  { weekday: 1, start: "17:00" },
-  { weekday: 2, start: "19:00" },
-  { weekday: 3 }
-];
+  { weekday: 1, periods: [["17:00", "23:59"]] },
+  { weekday: 2, periods: [["19:00", "23:59"]] },
+  { weekday: 3, periods: [["00:00", "23:59"]] }
+] as const;
 
 const envSchema = z.object({
   username: z.string().min(1, "UCAS_USERNAME is required"),
   password: z.string().min(1, "UCAS_PASSWORD is required")
 });
+
+const timePeriodSchema = z.tuple([z.string().min(1), z.string().min(1)]);
 
 const fileSchema = z.object({
   logging: z
@@ -44,8 +54,7 @@ const fileSchema = z.object({
       statePath: z.string().min(1).optional(),
       schedule: z
         .object({
-          startHour: z.number().int().min(0).max(23).optional(),
-          endHour: z.number().int().min(0).max(23).optional(),
+          periods: z.array(timePeriodSchema).min(1).optional(),
           intervalMinutes: z.number().int().min(1).optional(),
           runImmediatelyOnStart: z.boolean().optional()
         })
@@ -55,9 +64,8 @@ const fileSchema = z.object({
   captcha: z
     .object({
       enabled: z.boolean().optional(),
-      language: z.string().min(1).optional(),
       maxAttempts: z.number().int().min(1).max(5).optional(),
-      langPath: z.string().min(1).optional()
+      pythonExecutable: z.string().min(1).optional()
     })
     .optional(),
   filter: z
@@ -66,8 +74,7 @@ const fileSchema = z.object({
         .array(
           z.object({
             weekday: z.number().int().min(0).max(6),
-            start: z.string().optional(),
-            end: z.string().optional()
+            periods: z.array(timePeriodSchema).min(1)
           })
         )
         .min(1)
@@ -94,26 +101,21 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
     password: process.env.UCAS_PASSWORD ?? ""
   });
 
-  const configPath = resolve(
-    args.values.config ?? process.env.UCAS_CONFIG_PATH ?? defaultConfigFilePath
-  );
+  const configPath = resolve(args.values.config ?? defaultConfigFilePath);
   const configFileExists = existsSync(configPath);
-  const rawConfig = loadConfigFile(configPath, Boolean(args.values.config) || Boolean(process.env.UCAS_CONFIG_PATH));
+  const rawConfig = loadConfigFile(configPath, Boolean(args.values.config));
   const parsedFile = fileSchema.parse(rawConfig ?? {});
   const runMode = (parsedFile.runtime?.mode ?? "single") as RunMode;
   const schedule = {
-    startHour: parsedFile.runtime?.schedule?.startHour ?? 8,
-    endHour: parsedFile.runtime?.schedule?.endHour ?? 18,
+    periods: normalizeTimeRanges(
+      parsedFile.runtime?.schedule?.periods ?? [...defaultSchedulePeriods],
+      "runtime.schedule.periods"
+    ),
     intervalMinutes: parsedFile.runtime?.schedule?.intervalMinutes ?? 60,
     runImmediatelyOnStart: parsedFile.runtime?.schedule?.runImmediatelyOnStart ?? true
   };
-
-  if (schedule.endHour < schedule.startHour) {
-    throw new Error("runtime.schedule.endHour must be greater than or equal to startHour");
-  }
-
-  const resolvedTimeWindows = (parsedFile.filter?.timeWindows ?? defaultTimeWindows).map(
-    normalizeTimeWindowRule
+  const resolvedTimeWindows = (parsedFile.filter?.timeWindows ?? defaultTimeWindows).map((rule) =>
+    normalizeDailyTimeWindows(rule, "filter.timeWindows")
   );
 
   return {
@@ -139,9 +141,10 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
       "info",
     captcha: {
       enabled: parsedFile.captcha?.enabled ?? true,
-      language: parsedFile.captcha?.language ?? "eng",
       maxAttempts: parsedFile.captcha?.maxAttempts ?? 3,
-      langPath: parsedFile.captcha?.langPath ?? "https://tessdata.projectnaptha.com/4.0.0"
+      pythonExecutable: resolve(
+        parsedFile.captcha?.pythonExecutable ?? defaultPythonExecutable()
+      )
     }
   };
 }
@@ -163,23 +166,48 @@ function loadConfigFile(path: string, required: boolean): unknown {
   }
 }
 
-function normalizeTimeWindowRule(rule: {
-  weekday: number;
-  start?: string;
-  end?: string;
-}): TimeWindowRule {
-  const startMinutes = rule.start ? parseClockTime(rule.start) : null;
-  const endMinutes = rule.end ? parseClockTime(rule.end) : null;
-
-  if (endMinutes !== null && startMinutes !== null && endMinutes < startMinutes) {
-    throw new Error(`invalid time window for weekday ${rule.weekday}: end is earlier than start`);
-  }
-
+function normalizeDailyTimeWindows(
+  rule: {
+    weekday: number;
+    periods: ReadonlyArray<readonly [string, string]>;
+  },
+  path: string
+): DailyTimeWindows {
   return {
     weekday: rule.weekday,
-    startMinutes,
-    endMinutes
+    ranges: normalizeTimeRanges(rule.periods, `${path}[weekday=${rule.weekday}].periods`)
   };
+}
+
+function normalizeTimeRanges(
+  ranges: ReadonlyArray<readonly [string, string]>,
+  path: string
+): TimeRange[] {
+  const normalized = ranges.map(([start, end], index) => {
+    const startMinutes = parseClockTime(start);
+    const endMinutes = parseClockTime(end);
+
+    if (endMinutes < startMinutes) {
+      throw new Error(`${path}[${index}] end is earlier than start`);
+    }
+
+    return {
+      startMinutes,
+      endMinutes
+    };
+  });
+
+  normalized.sort((left, right) => left.startMinutes - right.startMinutes);
+
+  for (let index = 1; index < normalized.length; index += 1) {
+    const previous = normalized[index - 1];
+    const current = normalized[index];
+    if (current.startMinutes <= previous.endMinutes) {
+      throw new Error(`${path} contains overlapping periods`);
+    }
+  }
+
+  return normalized;
 }
 
 function parseClockTime(value: string): number {
@@ -195,4 +223,10 @@ function parseClockTime(value: string): number {
   }
 
   return hours * 60 + minutes;
+}
+
+function defaultPythonExecutable(): string {
+  return platform() === "win32"
+    ? ".venv-ddddocr/Scripts/python.exe"
+    : ".venv-ddddocr/bin/python";
 }

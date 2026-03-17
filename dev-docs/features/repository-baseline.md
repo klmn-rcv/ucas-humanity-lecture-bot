@@ -14,7 +14,7 @@
 
 1. 当前项目使用 TypeScript 作为主要实现语言，运行方式依赖 `tsx`。
 2. 浏览器自动化依赖 `playwright`，默认目标浏览器是 Chromium。
-3. 验证码识别依赖 `tesseract.js` 的本地 OCR 能力。
+3. 验证码识别依赖本地 Python `ddddocr` 能力。
 4. 配置校验依赖 `zod`，测试框架使用 `vitest`。
 5. 本地运行状态会保存到 JSON 文件，而不是数据库或远程服务。
 
