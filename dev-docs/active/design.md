@@ -103,6 +103,8 @@
 5. 如果出现新设备邮箱验证，在 `headful` 模式下等待人工完成
 6. 登录成功后通过门户入口建立 `xkcts` 会话
 
+当前人工验证检测已经收紧到更可靠的口径：优先识别 `https://sep.ucas.ac.cn/user/userVisit` 这类已知验证页，并显式跳过普通 `appStore` 门户页，避免把正常的 SEP 门户误判成邮箱验证页面。
+
 ### `src/captcha.ts`
 
 验证码实现已经完全切换为 `ddddocr`，不再保留 `tesseract.js` 路径。当前实现要点如下：

@@ -11,6 +11,8 @@
 
 这些脚本最终都会调用 `npm start`，但会顺手统一 Playwright 缓存目录、npm 缓存目录和后台重定向方式。
 
+基于 2026-03-18 的 README 现场验证，`scripts/run-bot.sh --dry-run` 和 `scripts/run-bot.sh --headful --dry-run` 都已经在真实凭据环境下成功跑到讲座页并输出 summary。
+
 ## 运行模式事实
 
 当前系统有两个正式运行模式：
@@ -33,6 +35,15 @@
 5. 如果当天所有时间段都已结束，则下一次执行会推到下一天的第一个时间段开始时刻。
 6. 定时模式下，每一轮都会重新创建浏览器实例和上下文。
 7. 单轮执行失败时，进程不会退出，而是记录错误并等待下一次巡检。
+
+## 安装前置事实
+
+README 中当前要求先执行：
+
+1. `npm install`
+2. `npx playwright install chromium`
+
+其中第二条在某些受 HTTPS 证书链拦截的网络环境中可能失败，并报出 `self-signed certificate in certificate chain`。这属于外部网络环境限制，而不是项目脚本本身的参数错误。
 
 ## 停止条件事实
 

@@ -8,6 +8,7 @@
 2. 主配置模型继续收敛到 `ucas-bot.config.toml`
 3. 巡检与筛选时间段都改成数组时间段模型
 4. `macOS/Linux` 与 `Windows` 的启动命令都封装成了脚本
+5. README 中的安装与运行流程已按文档做现场回归验证
 
 ## 本轮主要改动
 
@@ -26,18 +27,27 @@
 7. 把原来的 `scripts/ddddocr-experiment.py` 重命名为正式运行脚本 `scripts/solve-captcha.py`。
 8. 重写了 `README.md`、`.env.example` 和 `ucas-bot.config.example.toml`，使其适合公开 GitHub 仓库直接使用。
 9. 默认配置文件从 JSON 切换到 TOML，示例文件改为可直接带注释复制使用，同时仍兼容读取旧的本地 `ucas-bot.config.json`。
+10. 通过真实运行 README 的 `./scripts/run-bot.sh --dry-run` 与 `./scripts/run-bot.sh --headful --dry-run`，发现并修复了“普通 `appStoreStudent` 门户页被误判成邮箱验证页”的问题。
+11. README 额外补充了 Playwright 浏览器下载在证书链被拦截的网络环境下可能失败的说明。
 
 ## 验证结果
 
 本轮已完成的本地验证：
 
 1. `npm run typecheck` 通过。
-2. `npm test` 通过，当前共 20 个测试。
+2. `npm test` 通过，当前共 22 个测试。
 3. 新增或更新的测试覆盖了：
    - 数组化调度时间段
    - 数组化筛选时间段
    - 新的公开配置结构
    - 验证码重试上限约束
+   - 人工验证页识别逻辑
+4. 按 README 在隔离副本中完成了模板复制步骤：`cp .env.example .env`、`cp ucas-bot.config.example.toml ucas-bot.config.toml`。
+5. 使用真实本地凭据在主仓库中执行了 README 的运行命令：
+   - `./scripts/run-bot.sh --dry-run`
+   - `./scripts/run-bot.sh --headful --dry-run`
+   两条命令都成功进入讲座页并输出 summary。
+6. `npx playwright install chromium` 在当前网络环境中因为 `self-signed certificate in certificate chain` 失败，因此 README 已补充证书链注意事项。
 
 ## 当前仓库状态
 
@@ -48,10 +58,11 @@
 3. 用户可以直接通过脚本启动前台或后台运行，而不必自己拼接跨平台命令。
 4. README 已明确说明校园网内、校园网外、验证码、邮箱验证、定时巡检和时间段配置方法。
 5. 配置模板中的字段说明已移入 TOML 注释，不再依赖 README 逐项展开解释。
+6. README 中的关键运行命令已经过现场验证，不再只是静态文档描述。
 
 ## 剩余风险
 
-1. 这轮没有再次做真实站点现场登录验证，因此 `ddddocr-only` 路径在本轮中只做了本地逻辑和测试验证，没有重新做线上 live run。
-2. `Windows` 脚本是在当前仓库内完成静态封装，但没有在当前执行环境里做实际启动验证。
-3. 后台运行仍然无法自动处理 SEP 的邮箱验证，用户仍需先做一次前台授权。
-4. 当前筛选规则虽然已经支持多时间段，但仍只支持时间维度。
+1. `Windows` 脚本是在当前仓库内完成静态封装，但没有在当前执行环境里做实际启动验证。
+2. 后台运行仍然无法自动处理 SEP 的邮箱验证，用户仍需先做一次前台授权。
+3. 当前筛选规则虽然已经支持多时间段，但仍只支持时间维度。
+4. `npx playwright install chromium` 在当前网络环境下受到证书链拦截影响；虽然 README 已补充说明，但这仍然是首次安装时的外部环境风险。

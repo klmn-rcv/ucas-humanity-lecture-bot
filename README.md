@@ -16,6 +16,8 @@ npm install
 npx playwright install chromium
 ```
 
+如果 `npx playwright install chromium` 因 `self-signed certificate in certificate chain` 失败，需要切换到不拦截 HTTPS 的网络环境，或先把本地/校园网证书链加入 Node 信任配置。
+
 ## 安装 ddddocr
 
 ### macOS / Linux

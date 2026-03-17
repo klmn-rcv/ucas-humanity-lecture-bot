@@ -6,6 +6,7 @@ import { normalizeWhitespace } from "./util.js";
 
 const loginFormSelector = "#userName1, input[name='userName1']";
 const manualVerificationWaitMs = 10 * 60 * 1000;
+const manualVerificationUrlPatterns = ["/user/userVisit"];
 const manualVerificationKeywords = [
   "新设备",
   "邮箱验证",
@@ -241,18 +242,33 @@ async function findManualVerificationSurface(
     .filter((candidate) => !candidate.isClosed());
 
   for (const candidate of pages) {
+    const url = candidate.url();
     const title = normalizeWhitespace(await candidate.title().catch(() => ""));
     const bodyText = normalizeWhitespace(await candidate.locator("body").innerText().catch(() => ""));
     const haystack = `${title} ${bodyText}`;
 
-    if (manualVerificationKeywords.some((keyword) => haystack.includes(keyword))) {
-      return {
-        url: candidate.url(),
-        title,
-        snippet: bodyText.slice(0, 240)
-      };
+    if (!isManualVerificationSurface(url, haystack)) {
+      continue;
     }
+
+    return {
+      url,
+      title,
+      snippet: bodyText.slice(0, 240)
+    };
   }
 
   return null;
+}
+
+export function isManualVerificationSurface(url: string, haystack: string): boolean {
+  if (manualVerificationUrlPatterns.some((pattern) => url.includes(pattern))) {
+    return true;
+  }
+
+  if (url.includes("/appStore")) {
+    return false;
+  }
+
+  return manualVerificationKeywords.some((keyword) => haystack.includes(keyword));
 }
