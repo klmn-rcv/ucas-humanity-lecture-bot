@@ -19,14 +19,12 @@ const runModes = ["single", "scheduled"] as const;
 const defaultConfigFilePath = "ucas-bot.config.toml";
 const legacyConfigFilePath = "ucas-bot.config.json";
 const defaultLoginUrl = "https://sep.ucas.ac.cn/?loginFrom=/appStore";
-const defaultLectureUrl = "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture";
+const defaultLectureUrl = "https://jwxk.ucas.ac.cn/subject/humanityLecture";
 const defaultStatePath = ".cache/lecture-state.json";
-const defaultSchedulePeriods = [["08:00", "18:00"]] as const;
-const defaultTimeWindows = [
-  { weekday: 1, periods: [["17:00", "23:59"]] },
-  { weekday: 2, periods: [["19:00", "23:59"]] },
-  { weekday: 3, periods: [["00:00", "23:59"]] }
-] as const;
+const defaultSchedulePeriods = [["00:00", "23:59"]] as const;
+const defaultTimeWindows = Array.from({ length: 7 }, (_, weekday) => ({
+  weekday, periods: [["00:00", "23:59"]] as const
+}));
 
 const envSchema = z.object({
   username: z.string().min(1, "UCAS_USERNAME is required"),
@@ -112,7 +110,7 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): AppConfig {
       parsedFile.runtime?.schedule?.periods ?? [...defaultSchedulePeriods],
       "runtime.schedule.periods"
     ),
-    intervalMinutes: parsedFile.runtime?.schedule?.intervalMinutes ?? 60,
+    intervalMinutes: parsedFile.runtime?.schedule?.intervalMinutes ?? 720,
     runImmediatelyOnStart: parsedFile.runtime?.schedule?.runImmediatelyOnStart ?? true
   };
   const resolvedTimeWindows = (parsedFile.filter?.timeWindows ?? defaultTimeWindows).map((rule) =>

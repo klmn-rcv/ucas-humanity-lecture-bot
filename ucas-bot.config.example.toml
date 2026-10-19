@@ -1,17 +1,17 @@
 [targets]
 loginUrl = "https://sep.ucas.ac.cn/?loginFrom=/appStore"  # 通常无需修改。
-lectureUrl = "https://xkcts.ucas.ac.cn:8443/subject/humanityLecture"
+lectureUrl = "https://jwxk.ucas.ac.cn/subject/humanityLecture"
 
 [runtime]
-mode = "single"  # single: 执行一轮后退出；scheduled: 在设定时段内循环巡检。
+mode = "single"  # single: 执行一轮；scheduled: 常驻监控所有讲座的预约开放时间。
 headless = true  # true 表示无界面运行；false 表示显示浏览器窗口。临时调试更适合用 --headful 覆盖。
 dryRun = true  # true 表示只检查候选讲座、不执行报名；false 表示执行真实报名。临时调试更适合用 --dry-run 或 --no-dry-run 覆盖。
 statePath = ".cache/lecture-state.json"  # 本地状态文件路径。
 
 [runtime.schedule]
-periods = [["08:00", "18:00"]]  # 每个数组表示一个可运行时段，支持同一天多个不连续时段。
-intervalMinutes = 60  # scheduled 模式下的巡检间隔，单位分钟。
-runImmediatelyOnStart = true  # 程序启动时如果正处于可运行时段内，是否立刻先执行一轮。
+periods = [["00:00", "23:59"]]  # 仅 runImmediatelyOnStart = false 时用于确定首次扫描时间；不限制已发现的预约定时。
+intervalMinutes = 720  # 普通全量重扫间隔（12小时）；开放前1分钟预热，到点后按秒检查。
+runImmediatelyOnStart = true  # 启动后立即扫描并处理已经开放的讲座。
 
 [captcha]
 enabled = true  # 出现验证码时是否尝试自动识别。
@@ -19,10 +19,8 @@ maxAttempts = 5  # 登录阶段最多重试 5 次。
 pythonExecutable = ".venv-ddddocr/bin/python"  # ddddocr 所使用的 Python 可执行文件路径。
 # Windows系统使用： pythonExecutable = ".venv-ddddocr/Scripts/python.exe"
 
-[[filter.timeWindows]]
-weekday = 0  # 0 = 周日，1 = 周一，2 = 周二，依此类推。
-periods = [["8:00", "10:00"], ["17:00", "23:59"]]  # 每个数组表示一个允许报名的时间段。
-
-[[filter.timeWindows]]
-weekday = 2
-periods = [["19:00", "23:59"]]
+# 默认全周全天，不限制讲座主题、标题或开讲时间。
+# 如需限制开讲时间，可添加以下规则（与预约开放时间无关）：
+# [[filter.timeWindows]]
+# weekday = 2  # 0 = 周日，1 = 周一，2 = 周二。
+# periods = [["19:00", "23:59"]]

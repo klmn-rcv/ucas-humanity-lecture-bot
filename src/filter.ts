@@ -8,7 +8,8 @@ export function decideLectures(
   state: BotState,
   seenInRun: Set<string>,
   quotaReached: boolean,
-  timeWindows: DailyTimeWindows[]
+  timeWindows: DailyTimeWindows[],
+  now = new Date()
 ): LectureDecision[] {
   if (quotaReached) {
     return lectures.map((lecture) => ({
@@ -18,14 +19,15 @@ export function decideLectures(
     }));
   }
 
-  return lectures.map((lecture) => decideLecture(lecture, state, seenInRun, timeWindows));
+  return lectures.map((lecture) => decideLecture(lecture, state, seenInRun, timeWindows, now));
 }
 
 function decideLecture(
   lecture: LectureRecord,
   state: BotState,
   seenInRun: Set<string>,
-  timeWindows: DailyTimeWindows[]
+  timeWindows: DailyTimeWindows[],
+  now: Date
 ): LectureDecision {
   const storedState = getStoredLectureState(state, lecture.id);
   if (storedState) {
@@ -45,6 +47,13 @@ function decideLecture(
   }
 
   const parsed = lecture.startTimeText ? parseLectureStart(lecture.startTimeText) : null;
+  if (lecture.reservationClosesAt && Date.parse(lecture.reservationClosesAt) <= now.getTime() ||
+      lecture.statusText === "预约已结束" || parsed && parsed.date <= now) {
+    return { lecture, action: "skip", reason: "reservation-ended" };
+  }
+  if (lecture.reservationOpensAt && Date.parse(lecture.reservationOpensAt) > now.getTime()) {
+    return { lecture, action: "skip", reason: "reservation-not-open" };
+  }
   if (!parsed || !isAllowedLectureTime(parsed.date, timeWindows)) {
     return {
       lecture,
@@ -101,6 +110,10 @@ export function summarizeDecisionReasonWithRules(
       return parsed ? explainTimeRule(parsed.date, timeWindows) : "开始时间格式无法解析，默认跳过";
     case "no-action":
       return "页面上未发现可点击的报名入口";
+    case "reservation-not-open":
+      return `等待开放预约：${decision.lecture.reservationOpensAt}`;
+    case "reservation-ended":
+      return "预约已截止或讲座已开始";
     case "duplicate-in-run":
       return "本次运行中已处理过该讲座";
     case "candidate":

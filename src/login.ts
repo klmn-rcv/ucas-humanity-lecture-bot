@@ -18,7 +18,10 @@ const manualVerificationKeywords = [
 ];
 
 export async function ensureAuthenticated(page: Page, config: AppConfig, logger: Logger): Promise<void> {
-  await page.goto(config.humanityLectureUrl, { waitUntil: "domcontentloaded" });
+  if (page.url().startsWith(config.humanityLectureUrl) && await isLecturePage(page)) {
+    return;
+  }
+  await page.goto(config.loginUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1000);
 
   if (await isLecturePage(page)) {
@@ -62,7 +65,7 @@ export async function ensureAuthenticated(page: Page, config: AppConfig, logger:
 }
 
 async function openLoginPageIfNeeded(page: Page, config: AppConfig): Promise<void> {
-  if ((await isLoginPage(page)) || (await isAppStorePage(page))) {
+  if ((await isLoginPage(page)) || (await isSepPortalPage(page))) {
     return;
   }
 
@@ -114,7 +117,10 @@ async function isLoginPage(page: Page): Promise<boolean> {
 }
 
 async function isLecturePage(page: Page): Promise<boolean> {
-  if (page.url().includes("/subject/humanityLecture") && !(await isSessionExpiredPage(page))) {
+  if ((await isLoginPage(page)) || (await isUnavailablePage(page))) {
+    return false;
+  }
+  if (page.url().includes("/subject/humanityLecture")) {
     return true;
   }
 
@@ -126,35 +132,62 @@ async function isLecturePage(page: Page): Promise<boolean> {
   return false;
 }
 
-async function isSessionExpiredPage(page: Page): Promise<boolean> {
+async function isUnavailablePage(page: Page): Promise<boolean> {
+  const title = normalizeWhitespace(await page.title().catch(() => ""));
   const bodyText = normalizeWhitespace(await page.locator("body").innerText().catch(() => ""));
-  return bodyText.includes("你的会话已失效") || bodyText.includes("请重新登录");
+  return (
+    bodyText.includes("你的会话已失效") ||
+    bodyText.includes("请重新登录") ||
+    bodyText.includes("您没有权限访问该网站") ||
+    title.includes("403")
+  );
 }
 
-async function isAppStorePage(page: Page): Promise<boolean> {
-  const url = page.url();
-  return url.includes("/appStore") || url.includes("/appStoreStudent");
+export function isSepPortalUrl(url: string): boolean {
+  const path = new URL(url).pathname;
+  return path === "/appStore" || path === "/appStoreStudent" || path === "/sepCard/card";
+}
+
+async function isSepPortalPage(page: Page): Promise<boolean> {
+  return isSepPortalUrl(page.url());
 }
 
 async function establishLectureSession(page: Page, config: AppConfig, logger: Logger): Promise<void> {
-  if (!(await isAppStorePage(page))) {
+  if (!(await isSepPortalPage(page))) {
     await page.goto(config.loginUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1000);
   }
 
-  if (await isAppStorePage(page)) {
-    await page.waitForTimeout(3000);
-    const portalHref = await findHumanityPortalHref(page);
+  if (await isSepPortalPage(page)) {
+    const deadline = Date.now() + 20000;
+    let portalHref: string | null = null;
+    let courseCategoryOpened = false;
+    while (!portalHref && Date.now() < deadline) {
+      const welcomeButton = page.locator("#sepWelcomeOk");
+      if (await welcomeButton.isVisible()) {
+        await welcomeButton.click();
+      }
+      portalHref = await findHumanityPortalHref(page);
+      if (!portalHref && !courseCategoryOpened) {
+        const courseTab = page.getByRole("tab", { name: "课程学习", exact: true });
+        if (await courseTab.isVisible()) {
+          courseCategoryOpened = await courseTab.click({ timeout: 1000 }).then(() => true).catch(() => false);
+        }
+      }
+      if (!portalHref) await page.waitForTimeout(500);
+    }
     if (!portalHref) {
       const title = normalizeWhitespace(await page.title().catch(() => ""));
-      const bodyText = normalizeWhitespace(await page.locator("body").innerText().catch(() => ""));
       throw new Error(
-        `SEP 门户页中未找到“人文讲座报名”入口，无法建立讲座系统会话；url=${page.url()} title=${title} body=${bodyText.slice(0, 240)}`
+        `SEP 门户页中未找到“选课系统”或“人文讲座报名”入口，无法建立讲座系统会话；url=${page.url()} title=${title}`
       );
     }
 
     const resolved = new URL(portalHref, page.url()).toString();
-    logger.info("auth.portal-entry", { portalHref: resolved });
+    const entryUrl = new URL(resolved);
+    logger.info("auth.portal-entry", {
+      portalHref: entryUrl.origin + entryUrl.pathname.split("/").slice(0, 4).join("/")
+    });
     await page.goto(resolved, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
   }
@@ -164,31 +197,43 @@ async function establishLectureSession(page: Page, config: AppConfig, logger: Lo
 }
 
 async function findHumanityPortalHref(page: Page): Promise<string | null> {
-  const href = await page
+  const links = await page
     .evaluate(() => {
-      const links = Array.from(document.querySelectorAll("a"))
-        .map((anchor) => ({
-          text: (anchor.textContent ?? "").replace(/\s+/g, " ").trim(),
-          href: anchor.getAttribute("href")?.trim() ?? ""
-        }))
-        .filter((link) => link.href);
+      return Array.from(document.querySelectorAll("a, button, [data-url]"))
+        .map((element) => ({
+          text: (element.textContent ?? "").replace(/\s+/g, " ").trim(),
+          href: element.getAttribute("href"),
+          dataUrl: element.getAttribute("data-url"),
+          onclick: element.getAttribute("onclick"),
+          cardName: element.closest("[data-card-name]")?.getAttribute("data-card-name") ?? ""
+        }));
+    });
 
-      const byText = links.find((link) => link.text.includes("人文讲座报名"));
-      if (byText?.href) {
-        return byText.href;
-      }
+  return selectLecturePortalHref(links.map(link => ({
+    text: link.text,
+    cardName: link.cardName,
+    href: extractPortalHref(link) ?? ""
+  })));
+}
 
-      const byHref = links.find(
-        (link) =>
-          link.href.includes("humanityNotice") ||
-          link.href.includes("humanityLecture") ||
-          link.href.includes("xkcts.ucas.ac.cn")
-      );
-      return byHref?.href ?? null;
-    })
-    .catch(() => null);
+export function extractPortalHref(attributes: {
+  href?: string | null;
+  dataUrl?: string | null;
+  onclick?: string | null;
+}): string | null {
+  const openedUrl = attributes.onclick?.match(/window\.open\(\s*(['"])(.*?)\1\s*[,)]/)?.[2];
+  return [attributes.href, attributes.dataUrl, openedUrl]
+    .find(value => value && /^(?:\/(?!\/)|https?:\/\/)/i.test(value.trim()))?.trim() ?? null;
+}
 
-  return href && href.trim() ? href.trim() : null;
+export function selectLecturePortalHref(links: Array<{ text: string; href: string; cardName?: string }>): string | null {
+  const validLinks = links.filter(link => link.href.trim() && !/^(?:javascript:|#)/i.test(link.href.trim()));
+  const entry =
+    validLinks.find(link => link.text.includes("人文讲座报名")) ??
+    validLinks.find(link => link.cardName === "人文讲座" && link.text === "更多讲座") ??
+    validLinks.find(link => normalizeWhitespace(link.text) === "选课系统") ??
+    validLinks.find(link => /humanityNotice|humanityLecture|jwxk\.ucas\.ac\.cn|xkcts\.ucas\.ac\.cn/.test(link.href));
+  return entry?.href.trim() ?? null;
 }
 
 async function handleManualVerificationIfNeeded(
@@ -266,7 +311,7 @@ export function isManualVerificationSurface(url: string, haystack: string): bool
     return true;
   }
 
-  if (url.includes("/appStore")) {
+  if (isSepPortalUrl(url)) {
     return false;
   }
 

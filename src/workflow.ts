@@ -1,244 +1,153 @@
 import { chromium } from "playwright";
-import type {
-  AppConfig,
-  LectureDecision,
-  RegistrationAttemptResult,
-  RunSummary,
-  TerminalLectureState
-} from "./types.js";
+import type { AppConfig, LectureRecord, RunSummary } from "./types.js";
 import { Logger } from "./log.js";
-import { decideLectures, isQuotaReached, summarizeDecisionReasonWithRules } from "./filter.js";
-import { extractLectureSnapshot, extractQuotaFromRecordPage } from "./lecture-page.js";
+import { decideLectures, isQuotaReached } from "./filter.js";
+import { extractAllLectureSnapshot, extractLectureSnapshot, extractQuotaFromRecordPage, goToLecturePage } from "./lecture-page.js";
 import { ensureAuthenticated } from "./login.js";
-import { isWithinScheduledWindow, getNextScheduledRun } from "./schedule.js";
+import { getNextScheduledRun, getNextReservationCheck } from "./schedule.js";
 import { registerLecture } from "./register.js";
 import { loadState, markLectureTerminalState, saveState } from "./state-store.js";
+import { isAllowedLectureTime, parseLectureStart } from "./time-window.js";
 import { formatLocalTimestamp, sleep } from "./util.js";
 
 export async function runAutomation(config: AppConfig, logger: Logger): Promise<RunSummary> {
-  if (config.runMode === "single") {
-    return runAutomationCycle(config, logger, 1);
+  if (config.runMode === "scheduled" && !config.schedule.runImmediatelyOnStart) {
+    await sleep(getNextScheduledRun(new Date(), config.schedule).getTime() - Date.now());
   }
-
-  let cycle = 0;
-  let hasTriggeredImmediateRun = false;
-  let lastSummary = createEmptySummary(config, cycle);
-
-  while (true) {
-    const now = new Date();
-    const shouldRunImmediately =
-      !hasTriggeredImmediateRun &&
-      config.schedule.runImmediatelyOnStart &&
-      isWithinScheduledWindow(now, config.schedule);
-
-    if (!shouldRunImmediately) {
-      const nextRunAt = getNextScheduledRun(now, config.schedule);
-      const sleepMs = Math.max(0, nextRunAt.getTime() - now.getTime());
-      logger.info("run.schedule.sleep", {
-        nextRunAt: formatLocalTimestamp(nextRunAt),
-        sleepMs
-      });
-      await sleep(sleepMs);
-    }
-
-    cycle += 1;
-    hasTriggeredImmediateRun = true;
-
-    try {
-      lastSummary = await runAutomationCycle(config, logger, cycle);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("run.schedule.cycle-failed", {
-        cycle,
-        message
-      });
-    }
-  }
-
-  return lastSummary;
-}
-
-async function runAutomationCycle(
-  config: AppConfig,
-  logger: Logger,
-  cycle: number
-): Promise<RunSummary> {
-  const browser = await chromium.launch({
-    headless: config.headless
-  });
-
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true
-  });
+  const browser = await chromium.launch({ headless: config.headless });
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await context.newPage();
   const state = await loadState(config.statePath);
-  const attempts: RegistrationAttemptResult[] = [];
-  const skipped: LectureDecision[] = [];
-  let stopReason: string | null = null;
-  let quota = state.lastQuota ?? {
-    bookedCount: null,
-    requiredCount: null,
-    rawText: null
+  // The queue is reconstructed from the website on every start.
+  const lectures = new Map<string, LectureRecord>();
+  const previewed = new Set<string>();
+  const rejected = new Set<string>();
+  const summary: RunSummary = {
+    cycleCount: 0, dryRun: config.dryRun, candidates: [], skipped: [], attempts: [],
+    stopReason: null, quota: { bookedCount: null, requiredCount: null, rawText: null }
+  };
+  let nextScanAt = new Date(0);
+  let polling = false;
+  const merge = (incoming: LectureRecord[]): void => {
+    for (const lecture of incoming) {
+      const previous = lectures.get(lecture.id);
+      lectures.set(lecture.id, {
+        ...lecture,
+        reservationOpensAt: lecture.reservationOpensAt ?? previous?.reservationOpensAt,
+        reservationClosesAt: lecture.reservationClosesAt ?? previous?.reservationClosesAt
+      });
+    }
+  };
+  const watchable = (): LectureRecord[] => [...lectures.values()].filter(lecture => {
+    const start = lecture.startTimeText ? parseLectureStart(lecture.startTimeText) : null;
+    return !lecture.terminalState && lecture.statusText !== "预约已结束" &&
+      !state.terminalLectures[lecture.id] && !previewed.has(lecture.id) && !rejected.has(lecture.id) &&
+      start !== null && start.date.getTime() > Date.now() &&
+      (!lecture.reservationClosesAt || Date.parse(lecture.reservationClosesAt) > Date.now()) &&
+      isAllowedLectureTime(start.date, config.timeWindows);
+  });
+  const refreshQuota = async (): Promise<void> => {
+    summary.quota = await extractQuotaFromRecordPage(page, config.humanityLectureUrl) ?? summary.quota;
+    state.lastQuota = summary.quota;
   };
 
   try {
-    logger.info("run.cycle.start", {
-      cycle,
-      dryRun: config.dryRun,
-      runMode: config.runMode
-    });
+    while (true) {
+      try {
+        summary.cycleCount++;
+        await ensureAuthenticated(page, config, logger);
+        const fullScan = Date.now() >= nextScanAt.getTime();
+        if (fullScan) {
+          await page.goto(config.humanityLectureUrl, { waitUntil: "domcontentloaded" });
+          await ensureAuthenticated(page, config, logger);
+          const snapshot = await extractAllLectureSnapshot(page);
+          const ids = new Set(snapshot.lectures.map(lecture => lecture.id));
+          for (const id of lectures.keys()) if (!ids.has(id)) lectures.delete(id);
+          merge(snapshot.lectures);
+          summary.quota = snapshot.quota;
+          if (summary.quota.bookedCount === null || summary.quota.requiredCount === null) await refreshQuota();
+          state.lastQuota = summary.quota;
+          nextScanAt = new Date(Date.now() + config.schedule.intervalMinutes * 60_000);
+          rejected.clear();
+          logger.info("run.scan", {
+            lectureCount: lectures.size,
+            quotaBooked: summary.quota.bookedCount, quotaRequired: summary.quota.requiredCount,
+            upcoming: watchable().filter(lecture => lecture.reservationOpensAt && Date.parse(lecture.reservationOpensAt) > Date.now())
+              .sort((a, b) => Date.parse(a.reservationOpensAt!) - Date.parse(b.reservationOpensAt!))
+              .map(lecture => ({ id: lecture.id, title: lecture.title, opensAt: lecture.reservationOpensAt, closesAt: lecture.reservationClosesAt }))
+          });
+        } else {
+          const duePages = new Set(watchable().filter(lecture => !lecture.terminalState && (
+            lecture.actionAvailable || lecture.reservationOpensAt && Date.parse(lecture.reservationOpensAt) <= Date.now() + 10000
+          )).map(lecture => lecture.pageNumber ?? 1));
+          for (const number of duePages) {
+            await goToLecturePage(page, number, true);
+            await ensureAuthenticated(page, config, logger);
+            await goToLecturePage(page, number);
+            const refreshed = (await extractLectureSnapshot(page)).lectures.map(lecture => ({ ...lecture, pageNumber: number }));
+            const ids = new Set(refreshed.map(lecture => lecture.id));
+            // A newly inserted lecture can move a queued row onto another page.
+            if (watchable().some(lecture => lecture.pageNumber === number && !ids.has(lecture.id))) nextScanAt = new Date(0);
+            merge(refreshed);
+          }
+        }
 
-    await ensureAuthenticated(page, config, logger);
-    const snapshot = await extractLectureSnapshot(page);
-    const recordQuota =
-      snapshot.quota.bookedCount === null || snapshot.quota.requiredCount === null
-        ? await extractQuotaFromRecordPage(page, config.humanityLectureUrl)
-        : null;
-    quota = recordQuota ?? snapshot.quota;
-    state.lastQuota = quota;
-
-    if (isQuotaReached(quota)) {
-      stopReason = "已达到页面显示的预约次数要求";
-      logger.info("run.stop.quota-reached", {
-        bookedCount: quota.bookedCount,
-        requiredCount: quota.requiredCount
-      });
-      await saveState(config.statePath, state);
-      return {
-        cycleCount: cycle,
-        dryRun: config.dryRun,
-        quota,
-        candidates: [],
-        skipped: snapshot.lectures.map((lecture) => ({
-          lecture,
-          action: "stop",
-          reason: "quota-reached"
-        })),
-        attempts,
-        stopReason
-      };
-    }
-
-    const seenInRun = new Set<string>();
-    const decisions = decideLectures(
-      snapshot.lectures,
-      state,
-      seenInRun,
-      false,
-      config.timeWindows
-    );
-    const cycleCandidates = decisions
-      .filter((decision) => decision.action === "candidate")
-      .map((decision) => decision.lecture);
-    const cycleSkipped = decisions.filter((decision) => decision.action !== "candidate");
-    skipped.push(...cycleSkipped);
-
-    logger.info("run.cycle.analyzed", {
-      cycle,
-      lectureCount: snapshot.lectures.length,
-      candidateCount: cycleCandidates.length,
-      skippedCount: cycleSkipped.length,
-      quotaBooked: quota.bookedCount,
-      quotaRequired: quota.requiredCount
-    });
-
-    for (const decision of cycleSkipped) {
-      if (decision.reason === "page-terminal-state" && decision.lecture.terminalState) {
-        markLectureTerminalState(state, decision.lecture, decision.lecture.terminalState);
-      }
-
-      logger.debug("run.cycle.skip", {
-        cycle,
-        lectureId: decision.lecture.id,
-        title: decision.lecture.title,
-        reason: decision.reason,
-        detail: summarizeDecisionReasonWithRules(decision, config.timeWindows)
-      });
-    }
-
-    if (config.dryRun) {
-      stopReason =
-        config.runMode === "scheduled"
-          ? "scheduled 模式下本轮仅输出候选讲座，不执行真实报名"
-          : "dry-run 模式下只输出候选讲座，不执行真实报名";
-      await saveState(config.statePath, state);
-      return {
-        cycleCount: cycle,
-        dryRun: true,
-        quota,
-        candidates: cycleCandidates,
-        skipped,
-        attempts,
-        stopReason
-      };
-    }
-
-    for (const lecture of cycleCandidates) {
-      const result = await registerLecture(page, lecture, logger);
-      attempts.push(result);
-      logger.info("run.register.result", { ...result });
-
-      if (result.outcome === "registered") {
-        markLectureTerminalState(state, lecture, "booked", result.detail);
-      }
-
-      if (result.outcome === "full") {
-        markLectureTerminalState(state, lecture, "full", result.detail);
-      }
-
-      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => undefined);
-      const refreshed = await extractLectureSnapshot(page);
-      const refreshedRecordQuota =
-        refreshed.quota.bookedCount === null || refreshed.quota.requiredCount === null
-          ? await extractQuotaFromRecordPage(page, config.humanityLectureUrl)
-          : null;
-      quota = refreshedRecordQuota ?? refreshed.quota;
-      state.lastQuota = quota;
-
-      if (isQuotaReached(quota)) {
-        stopReason = "报名后达到预约次数要求，已自动停止";
-        await saveState(config.statePath, state);
-        return {
-          cycleCount: cycle,
-          dryRun: false,
-          quota,
-          candidates: cycleCandidates,
-          skipped,
-          attempts,
-          stopReason
-        };
+        const decisions = decideLectures([...lectures.values()], state, new Set(), isQuotaReached(summary.quota), config.timeWindows);
+        summary.skipped = decisions.filter(decision => decision.action !== "candidate");
+        for (const decision of summary.skipped) {
+          if (decision.lecture.terminalState) markLectureTerminalState(state, decision.lecture, decision.lecture.terminalState);
+        }
+        if (isQuotaReached(summary.quota)) {
+          summary.stopReason = "已达到页面显示的次数要求，停止预约";
+          await saveState(config.statePath, state);
+          return summary;
+        }
+        summary.candidates = decisions.filter(decision => decision.action === "candidate").map(decision => decision.lecture);
+        for (const lecture of summary.candidates) {
+          if (rejected.has(lecture.id) || previewed.has(lecture.id)) continue;
+          logger.info(config.dryRun ? "run.preview" : "run.register.start", {
+            lectureId: lecture.id, title: lecture.title, opensAt: lecture.reservationOpensAt ?? null
+          });
+          if (config.dryRun) { previewed.add(lecture.id); continue; }
+          const result = await registerLecture(page, lecture, logger);
+          summary.attempts.push(result);
+          logger.info("run.register.result", { ...result });
+          if (result.outcome === "registered" || result.outcome === "already-booked") {
+            markLectureTerminalState(state, lecture, "booked", result.detail);
+          } else if (result.outcome === "full") {
+            markLectureTerminalState(state, lecture, "full", result.detail);
+          } else if (result.outcome === "rejected") {
+            // Time conflicts / eligibility failures cannot be fixed by one-second retries.
+            rejected.add(lecture.id);
+          }
+          if (result.outcome === "registered" || result.outcome === "already-booked") await refreshQuota();
+          await saveState(config.statePath, state);
+          if (isQuotaReached(summary.quota)) {
+            summary.stopReason = "报名后达到页面显示的次数要求，停止预约";
+            return summary;
+          }
+        }
+        if (fullScan) await saveState(config.statePath, state);
+        if (config.runMode === "single") {
+          summary.stopReason = config.dryRun ? "单次预览完成" : "单次预约完成";
+          return summary;
+        }
+        const next = getNextReservationCheck(watchable(), new Date(), nextScanAt);
+        const fast = next.getTime() - Date.now() <= 1100;
+        if (!fast || !polling) logger.info(fast ? "run.schedule.poll" : "run.schedule.sleep", {
+          nextRunAt: formatLocalTimestamp(next), ...(fast ? { intervalSeconds: 1 } : {})
+        });
+        polling = fast;
+        await sleep(Math.max(0, next.getTime() - Date.now()));
+      } catch (error) {
+        if (config.runMode === "single") throw error;
+        logger.error("run.schedule.cycle-failed", { message: error instanceof Error ? error.message : String(error) });
+        nextScanAt = new Date(0);
+        await sleep(5000);
       }
     }
-
-    await saveState(config.statePath, state);
-
-    return {
-      cycleCount: cycle,
-      dryRun: config.dryRun,
-      quota,
-      candidates: cycleCandidates,
-      skipped,
-      attempts,
-      stopReason
-    };
   } finally {
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
   }
-}
-
-function createEmptySummary(config: AppConfig, cycle: number): RunSummary {
-  return {
-    cycleCount: cycle,
-    dryRun: config.dryRun,
-    quota: {
-      bookedCount: null,
-      requiredCount: null,
-      rawText: null
-    },
-    candidates: [],
-    skipped: [],
-    attempts: [],
-    stopReason: null
-  };
 }

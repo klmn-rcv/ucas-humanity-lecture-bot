@@ -1,4 +1,25 @@
-import type { ScheduledRuntimeConfig } from "./types.js";
+import type { LectureRecord, ScheduledRuntimeConfig } from "./types.js";
+
+// All unopened lectures participate; the earliest wake wins, including ties.
+export function getNextReservationCheck(
+  lectures: LectureRecord[], now: Date, nextScanAt: Date
+): Date {
+  let next = nextScanAt.getTime();
+  for (const lecture of lectures) {
+    if (lecture.terminalState || lecture.statusText === "预约已结束") continue;
+    const closes = lecture.reservationClosesAt ? Date.parse(lecture.reservationClosesAt) : Infinity;
+    const starts = lecture.startTimeIso ? Date.parse(lecture.startTimeIso) : Infinity;
+    if (Math.min(closes, starts) <= now.getTime()) continue;
+    const opens = lecture.reservationOpensAt ? Date.parse(lecture.reservationOpensAt) : null;
+    if (opens !== null && opens > now.getTime()) {
+      // Refresh/re-authenticate one minute before opening, then wait to the exact time.
+      next = Math.min(next, opens - now.getTime() > 60000 ? opens - 60000 : opens);
+    } else if (opens !== null || lecture.actionAvailable) {
+      next = Math.min(next, now.getTime() + 1000);
+    }
+  }
+  return new Date(Math.max(now.getTime(), next));
+}
 
 export function isWithinScheduledWindow(date: Date, schedule: ScheduledRuntimeConfig): boolean {
   const minutes = date.getHours() * 60 + date.getMinutes();

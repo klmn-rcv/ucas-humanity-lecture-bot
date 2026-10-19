@@ -60,6 +60,9 @@ export interface LectureRecord {
   actionAvailable: boolean;
   terminalState: TerminalLectureState | null;
   rowIndex: number;
+  pageNumber?: number;
+  reservationOpensAt?: string | null;
+  reservationClosesAt?: string | null;
 }
 
 export interface LecturePageSnapshot {
@@ -92,6 +95,8 @@ export interface LectureDecision {
     | "local-terminal-state"
     | "page-terminal-state"
     | "no-action"
+    | "reservation-not-open"
+    | "reservation-ended"
     | "duplicate-in-run"
     | "candidate";
 }
@@ -105,7 +110,7 @@ export interface CaptchaSolveResult {
 export interface RegistrationAttemptResult {
   lectureId: string;
   title: string;
-  outcome: "registered" | "already-booked" | "full" | "unknown";
+  outcome: "registered" | "already-booked" | "full" | "rejected" | "unknown";
   detail: string;
 }
 

@@ -46,7 +46,8 @@ periods = [["00:00", "23:59"]]
     expect(config.runMode).toBe("scheduled");
     expect(config.schedule.runImmediatelyOnStart).toBe(false);
     expect(config.logLevel).toBe("debug");
-    expect(config.statePath.endsWith("tmp/state.json")).toBe(true);
+    expect(config.humanityLectureUrl).toBe("https://jwxk.ucas.ac.cn/subject/humanityLecture");
+    expect(config.statePath).toBe(resolve("tmp/state.json"));
     expect(config.schedule.periods).toEqual([
       { startMinutes: 8 * 60, endMinutes: 12 * 60 },
       { startMinutes: 14 * 60, endMinutes: 18 * 60 }
